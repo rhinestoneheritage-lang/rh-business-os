@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from services.whatsapp_service import WhatsAppService
+from whatsapp_service import WhatsAppService
 
 load_dotenv()
 
