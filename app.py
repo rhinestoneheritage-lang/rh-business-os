@@ -1,6 +1,18 @@
 """
-RH Business OS — WhatsApp AI Bot v0.1
-FastAPI backend for Meta WhatsApp Cloud API webhook
+RH Business OS — WhatsApp AI Bot v0.2
+Conversation flow engine for Rhinestone Heritage WhatsApp Bot.
+
+State machine (per phone number):
+  NEW
+    └─► AWAITING_BUYER_TYPE      (sent welcome + menu)
+          ├─► WHOLESALER_AWAITING_DESIGN   (reply "1")
+          │     └─► WHOLESALER_AWAITING_MOQ  (any message / image received)
+          │               └─► DONE
+          └─► DONE                          (reply "2" or "3" → sent retail offer)
+
+Sessions are persisted in data/sessions.json (keyed by phone number).
+Messages are still appended to data/messages.json (immutable log).
+whatsapp_service.py is UNCHANGED from v0.1.
 """
 
 import json
@@ -16,7 +28,7 @@ from whatsapp_service import WhatsAppService
 
 load_dotenv()
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -24,20 +36,82 @@ logging.basicConfig(
 )
 logger = logging.getLogger("rh-business-os")
 
-# ── Config ───────────────────────────────────────────────────────────────────
-VERIFY_TOKEN      = os.getenv("VERIFY_TOKEN", "")
-WHATSAPP_TOKEN    = os.getenv("WHATSAPP_TOKEN", "")
-PHONE_NUMBER_ID   = os.getenv("PHONE_NUMBER_ID", "")
-MESSAGES_FILE     = os.getenv("MESSAGES_FILE", "data/messages.json")
-AUTO_REPLY_TEXT   = (
-    "Welcome to Rhinestone Heritage. How can we help you?"
+# ── Config ────────────────────────────────────────────────────────────────────
+VERIFY_TOKEN    = os.getenv("VERIFY_TOKEN", "")
+WHATSAPP_TOKEN  = os.getenv("WHATSAPP_TOKEN", "")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "")
+MESSAGES_FILE   = os.getenv("MESSAGES_FILE", "data/messages.json")
+SESSIONS_FILE   = os.getenv("SESSIONS_FILE", "data/sessions.json")
+
+# ── States ────────────────────────────────────────────────────────────────────
+STATE_NEW                    = "NEW"
+STATE_AWAITING_BUYER_TYPE    = "AWAITING_BUYER_TYPE"
+STATE_WHOLESALER_AWAITING_DESIGN = "WHOLESALER_AWAITING_DESIGN"
+STATE_WHOLESALER_AWAITING_MOQ   = "WHOLESALER_AWAITING_MOQ"
+STATE_DONE                   = "DONE"
+
+# ── Reply templates ───────────────────────────────────────────────────────────
+MSG_WELCOME = (
+    "👋 Welcome to Rhinestone Heritage.\n\n"
+    "Please select your buyer type:\n\n"
+    "1️⃣ Wholesaler / Garment Manufacturer\n"
+    "2️⃣ Retailer\n"
+    "3️⃣ Personal Buyer\n\n"
+    "Reply with 1, 2 or 3."
 )
 
-# ── FastAPI app ───────────────────────────────────────────────────────────────
+MSG_WHOLESALER_STEP1 = (
+    "Thank you. 😊\n\n"
+    "Kindly share a few reference images of the design you are looking for.\n\n"
+    "Based on your requirements, we will suggest similar designs from our collection."
+)
+
+MSG_WHOLESALER_STEP2 = (
+    "Thank you.\n\n"
+    "Please share your approximate quantity (MOQ) for each design.\n\n"
+    "Example:\n"
+    "• 100 pcs\n"
+    "• 500 pcs\n"
+    "• 1000 pcs"
+)
+
+MSG_RETAIL_PERSONAL = (
+    "Hello 👋\n\n"
+    "Thank you for your interest in Rhinestone Heritage.\n\n"
+    "✨ Premium Rhinestone Transfer Stickers available in hundreds of unique designs.\n\n"
+    "🎉 LIMITED TIME OFFER\n"
+    "✅ Flat 20% OFF on all Rhinestone Transfer Stickers\n\n"
+    "💎 SPECIAL BONUS:\n"
+    "Order above ₹5,000 and get an EXTRA 10% OFF on your purchase.\n\n"
+    "🔥 Total Savings up to 30%\n\n"
+    "Browse our collection:\n"
+    "https://www.rhinestoneheritage.com/collections/rhinestone-transfer-stickers\n\n"
+    "✔ Premium Quality\n"
+    "✔ Easy Iron-On Application\n"
+    "✔ Long Lasting Sparkle\n"
+    "✔ Durable & Wash Safe\n\n"
+    "Team Rhinestone Heritage"
+)
+
+MSG_INVALID_CHOICE = (
+    "Please reply with 1, 2 or 3 to continue."
+)
+
+# Follow-up template (stored in session, NOT auto-sent)
+MSG_FOLLOWUP_WHOLESALER = (
+    "👋 Just following up.\n\n"
+    "You can browse our latest Rhinestone Transfer Sticker Collection here:\n"
+    "https://rhinestoneheritage.in/p/rhinestone-shirts-stickers\n\n"
+    "Please send us the screenshot of your preferred design along with your "
+    "required quantity (MOQ).\n\n"
+    "We'll suggest the best options for your requirement. 😊"
+)
+
+# ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.1",
-    description="Meta WhatsApp Cloud API webhook backend",
-    version="0.1.0",
+    title="RH Business OS — WhatsApp AI Bot v0.2",
+    description="Conversation flow engine for Rhinestone Heritage",
+    version="0.2.0",
 )
 
 whatsapp = WhatsAppService(
@@ -46,10 +120,62 @@ whatsapp = WhatsAppService(
 )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def _save_message(record: dict) -> None:
-    """Append a message record to the JSON log file."""
+# ── Session store (flat JSON, keyed by phone number) ──────────────────────────
+
+def _load_sessions() -> dict:
+    """Load all sessions from disk."""
+    if not os.path.exists(SESSIONS_FILE):
+        return {}
     try:
+        with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.error("Failed to load sessions: %s", exc)
+        return {}
+
+
+def _save_sessions(sessions: dict) -> None:
+    """Persist all sessions to disk."""
+    try:
+        os.makedirs(os.path.dirname(SESSIONS_FILE), exist_ok=True)
+        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sessions, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error("Failed to save sessions: %s", exc)
+
+
+def _get_session(phone: str) -> dict:
+    """Return a session dict for this phone, creating one if absent."""
+    sessions = _load_sessions()
+    if phone not in sessions:
+        sessions[phone] = {
+            "phone":      phone,
+            "state":      STATE_NEW,
+            "buyer_type": None,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "followup_template": None,
+        }
+        _save_sessions(sessions)
+    return sessions[phone]
+
+
+def _update_session(phone: str, updates: dict) -> None:
+    """Apply a dict of updates to a session and persist."""
+    sessions = _load_sessions()
+    if phone not in sessions:
+        sessions[phone] = {}
+    sessions[phone].update(updates)
+    sessions[phone]["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    _save_sessions(sessions)
+
+
+# ── Message log ───────────────────────────────────────────────────────────────
+
+def _append_message(record: dict) -> None:
+    """Append an incoming message record to the immutable log file."""
+    try:
+        os.makedirs(os.path.dirname(MESSAGES_FILE), exist_ok=True)
         if os.path.exists(MESSAGES_FILE):
             with open(MESSAGES_FILE, "r", encoding="utf-8") as f:
                 messages = json.load(f)
@@ -60,60 +186,126 @@ def _save_message(record: dict) -> None:
 
         with open(MESSAGES_FILE, "w", encoding="utf-8") as f:
             json.dump(messages, f, indent=2, ensure_ascii=False)
-
     except Exception as exc:
-        logger.error("Failed to save message to file: %s", exc)
+        logger.error("Failed to save message: %s", exc)
+
+
+# ── Conversation engine ───────────────────────────────────────────────────────
+
+async def _handle_message(phone: str, msg_type: str, text_body: str) -> None:
+    """
+    Core state machine.
+    Reads current state, decides reply, sends it, updates state.
+    """
+    session = _get_session(phone)
+    state   = session.get("state", STATE_NEW)
+
+    logger.info("📊 State | phone=%s state=%s", phone, state)
+
+    # ── NEW: first contact ────────────────────────────────────────────────────
+    if state == STATE_NEW:
+        await _reply(phone, MSG_WELCOME)
+        _update_session(phone, {"state": STATE_AWAITING_BUYER_TYPE})
+        return
+
+    # ── AWAITING_BUYER_TYPE ───────────────────────────────────────────────────
+    if state == STATE_AWAITING_BUYER_TYPE:
+        choice = text_body.strip() if msg_type == "text" else ""
+
+        if choice == "1":
+            # Wholesaler / Garment Manufacturer
+            await _reply(phone, MSG_WHOLESALER_STEP1)
+            _update_session(phone, {
+                "state":      STATE_WHOLESALER_AWAITING_DESIGN,
+                "buyer_type": "wholesaler",
+                # Store follow-up template now; scheduling handled manually / v0.3+
+                "followup_template": MSG_FOLLOWUP_WHOLESALER,
+            })
+
+        elif choice in ("2", "3"):
+            buyer_type = "retailer" if choice == "2" else "personal"
+            await _reply(phone, MSG_RETAIL_PERSONAL)
+            _update_session(phone, {
+                "state":      STATE_DONE,
+                "buyer_type": buyer_type,
+            })
+
+        else:
+            # Non-text or invalid choice
+            await _reply(phone, MSG_INVALID_CHOICE)
+        return
+
+    # ── WHOLESALER_AWAITING_DESIGN: any message (text or image) ──────────────
+    if state == STATE_WHOLESALER_AWAITING_DESIGN:
+        await _reply(phone, MSG_WHOLESALER_STEP2)
+        _update_session(phone, {"state": STATE_WHOLESALER_AWAITING_MOQ})
+        return
+
+    # ── WHOLESALER_AWAITING_MOQ: MOQ received, close flow ─────────────────────
+    if state == STATE_WHOLESALER_AWAITING_MOQ:
+        await _reply(
+            phone,
+            "Thank you! 🙏 Our team will review your requirement and get back to you shortly."
+        )
+        _update_session(phone, {"state": STATE_DONE})
+        return
+
+    # ── DONE: conversation complete ───────────────────────────────────────────
+    if state == STATE_DONE:
+        await _reply(
+            phone,
+            "Thank you for reaching out to Rhinestone Heritage. "
+            "Our team will be in touch with you. 🙏"
+        )
+        return
+
+
+async def _reply(phone: str, text: str) -> None:
+    """Send a text reply and log the outcome."""
+    success = await whatsapp.send_text_message(to=phone, body=text)
+    if success:
+        logger.info("✅ Reply sent | to=%s", phone)
+    else:
+        logger.warning("⚠️  Reply failed | to=%s", phone)
 
 
 # ── Webhook: GET — verification ───────────────────────────────────────────────
 @app.get("/webhook")
 async def verify_webhook(
-    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_mode: str         = Query(None, alias="hub.mode"),
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
-    hub_challenge: str = Query(None, alias="hub.challenge"),
+    hub_challenge: str    = Query(None, alias="hub.challenge"),
 ):
-    """
-    Meta calls this endpoint to verify the webhook.
-    Responds with hub.challenge if the token matches.
-    """
     logger.info(
-        "Webhook verification attempt | mode=%s token_match=%s",
+        "Webhook verification | mode=%s token_match=%s",
         hub_mode,
         hub_verify_token == VERIFY_TOKEN,
     )
-
     if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
-        logger.info("✅ Webhook verified successfully.")
+        logger.info("✅ Webhook verified.")
         return PlainTextResponse(content=hub_challenge, status_code=200)
 
-    logger.warning("❌ Webhook verification failed — token mismatch or bad mode.")
+    logger.warning("❌ Webhook verification failed.")
     raise HTTPException(status_code=403, detail="Forbidden: invalid verify token")
 
 
 # ── Webhook: POST — incoming messages ─────────────────────────────────────────
 @app.post("/webhook")
 async def receive_webhook(request: Request):
-    """
-    Receives all events from Meta WhatsApp Cloud API.
-    Handles incoming text messages, logs them, saves to JSON,
-    and sends an auto-reply.
-    """
     try:
         body = await request.json()
     except Exception:
-        logger.error("Could not parse request body as JSON.")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    logger.info("📨 Webhook event received:\n%s", json.dumps(body, indent=2))
+    logger.info("📨 Webhook received:\n%s", json.dumps(body, indent=2))
 
-    # Validate it's a WhatsApp business account event
     if body.get("object") != "whatsapp_business_account":
         return JSONResponse(content={"status": "ignored"}, status_code=200)
 
     try:
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):
-                value = change.get("value", {})
+                value    = change.get("value", {})
                 messages = value.get("messages", [])
 
                 for msg in messages:
@@ -122,53 +314,42 @@ async def receive_webhook(request: Request):
                     timestamp   = msg.get("timestamp")
                     msg_type    = msg.get("type")
 
-                    # Extract text body (ignore non-text for v0.1)
+                    # Extract readable body for logging / state decisions
                     if msg_type == "text":
                         text_body = msg["text"]["body"]
+                    elif msg_type == "image":
+                        text_body = "[image]"
+                    elif msg_type == "document":
+                        text_body = "[document]"
+                    elif msg_type == "audio":
+                        text_body = "[audio]"
+                    elif msg_type == "video":
+                        text_body = "[video]"
                     else:
-                        text_body = f"[{msg_type} message — not handled in v0.1]"
+                        text_body = f"[{msg_type}]"
 
-                    # ── Terminal log ──────────────────────────────────────
                     logger.info(
-                        "💬 Message | from=%s | type=%s | body=%s",
-                        from_number,
-                        msg_type,
-                        text_body,
+                        "💬 Message | from=%s type=%s body=%s",
+                        from_number, msg_type, text_body,
                     )
 
-                    # ── Build record ──────────────────────────────────────
-                    record = {
-                        "message_id":   msg_id,
-                        "from":         from_number,
-                        "timestamp":    timestamp,
-                        "received_at":  datetime.utcnow().isoformat() + "Z",
-                        "type":         msg_type,
-                        "body":         text_body,
-                        "raw":          msg,
-                    }
+                    # ── Log to messages.json ──────────────────────────────
+                    _append_message({
+                        "message_id":  msg_id,
+                        "from":        from_number,
+                        "timestamp":   timestamp,
+                        "received_at": datetime.utcnow().isoformat() + "Z",
+                        "type":        msg_type,
+                        "body":        text_body,
+                        "raw":         msg,
+                    })
 
-                    # ── Save to JSON ──────────────────────────────────────
-                    _save_message(record)
-                    logger.info("💾 Message saved to %s", MESSAGES_FILE)
-
-                    # ── Auto-reply ────────────────────────────────────────
-                    if msg_type == "text":
-                        reply_result = await whatsapp.send_text_message(
-                            to=from_number,
-                            body=AUTO_REPLY_TEXT,
-                        )
-                        if reply_result:
-                            logger.info(
-                                "✅ Auto-reply sent to %s", from_number
-                            )
-                        else:
-                            logger.warning(
-                                "⚠️  Auto-reply failed for %s", from_number
-                            )
+                    # ── Run conversation engine ───────────────────────────
+                    await _handle_message(from_number, msg_type, text_body)
 
     except Exception as exc:
-        logger.exception("Unexpected error processing webhook: %s", exc)
-        # Always return 200 to Meta — otherwise it retries endlessly
+        logger.exception("Error processing webhook: %s", exc)
+        # Always 200 to Meta — never let it retry on our errors
         return JSONResponse(
             content={"status": "error", "detail": str(exc)},
             status_code=200,
@@ -182,6 +363,6 @@ async def receive_webhook(request: Request):
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "status":  "running",
     }
