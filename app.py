@@ -1,6 +1,6 @@
 """
-RH Business OS — WhatsApp AI Bot v0.2
-Conversation flow engine for Rhinestone Heritage WhatsApp Bot.
+RH Business OS — WhatsApp AI Bot v0.3
+Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
   NEW
@@ -42,6 +42,7 @@ WHATSAPP_TOKEN  = os.getenv("WHATSAPP_TOKEN", "")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "")
 MESSAGES_FILE   = os.getenv("MESSAGES_FILE", "data/messages.json")
 SESSIONS_FILE   = os.getenv("SESSIONS_FILE", "data/sessions.json")
+CUSTOMERS_FILE  = os.getenv("CUSTOMERS_FILE", "data/customers.json")
 
 # ── States ────────────────────────────────────────────────────────────────────
 STATE_NEW                    = "NEW"
@@ -109,9 +110,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.2",
-    description="Conversation flow engine for Rhinestone Heritage",
-    version="0.2.0",
+    title="RH Business OS — WhatsApp AI Bot v0.3",
+    description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
+    version="0.3.0",
 )
 
 whatsapp = WhatsAppService(
@@ -169,6 +170,66 @@ def _update_session(phone: str, updates: dict) -> None:
     sessions[phone]["updated_at"] = datetime.utcnow().isoformat() + "Z"
     _save_sessions(sessions)
 
+# ── Customer CRM store (flat JSON, keyed by phone number) ─────────────────────
+
+def _load_customers() -> dict:
+    """Load all customer profiles from disk."""
+    if not os.path.exists(CUSTOMERS_FILE):
+        return {}
+    try:
+        with open(CUSTOMERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.error("Failed to load customers: %s", exc)
+        return {}
+
+
+def _save_customers(customers: dict) -> None:
+    """Persist all customer profiles to disk."""
+    try:
+        os.makedirs(os.path.dirname(CUSTOMERS_FILE), exist_ok=True)
+        with open(CUSTOMERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(customers, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error("Failed to save customers: %s", exc)
+
+
+def _upsert_customer(
+    phone: str,
+    last_message: str,
+    buyer_type: str | None = None,
+    lead_status: str | None = None,
+) -> None:
+    """
+    Create or update one customer profile.
+    This is the first simple CRM layer for RH Business OS.
+    """
+    now = datetime.utcnow().isoformat() + "Z"
+    customers = _load_customers()
+
+    if phone not in customers:
+        customers[phone] = {
+            "phone_number": phone,
+            "first_seen": now,
+            "last_seen": now,
+            "buyer_type": buyer_type,
+            "lead_status": lead_status or "NEW_LEAD",
+            "last_message": last_message,
+            "message_count": 1,
+        }
+    else:
+        customers[phone]["last_seen"] = now
+        customers[phone]["last_message"] = last_message
+        customers[phone]["message_count"] = customers[phone].get("message_count", 0) + 1
+
+        if buyer_type is not None:
+            customers[phone]["buyer_type"] = buyer_type
+        if lead_status is not None:
+            customers[phone]["lead_status"] = lead_status
+
+    _save_customers(customers)
+
+
 
 # ── Message log ───────────────────────────────────────────────────────────────
 
@@ -194,19 +255,33 @@ def _append_message(record: dict) -> None:
 
 async def _handle_message(phone: str, msg_type: str, text_body: str) -> None:
     """
-    Core state machine.
-    Important fix:
+    Core state machine + Basic CRM.
+    Important:
     - Update customer state BEFORE sending reply.
-    - This prevents duplicate MOQ messages when customer sends multiple images.
+    - Prevent duplicate MOQ messages when customer sends multiple images.
+    - Save/update customer profile in customers.json.
     """
     session = _get_session(phone)
     state = session.get("state", STATE_NEW)
 
     logger.info("📊 State | phone=%s state=%s", phone, state)
 
+    # Save every inbound message to customer CRM first
+    _upsert_customer(
+        phone=phone,
+        last_message=text_body,
+        buyer_type=session.get("buyer_type"),
+        lead_status="NEW_LEAD" if state == STATE_NEW else None,
+    )
+
     # ── NEW: first contact ────────────────────────────────────────────────────
     if state == STATE_NEW:
         _update_session(phone, {"state": STATE_AWAITING_BUYER_TYPE})
+        _upsert_customer(
+            phone=phone,
+            last_message=text_body,
+            lead_status="WAITING_BUYER_TYPE",
+        )
         await _reply(phone, MSG_WELCOME)
         return
 
@@ -220,6 +295,12 @@ async def _handle_message(phone: str, msg_type: str, text_body: str) -> None:
                 "buyer_type": "wholesaler",
                 "followup_template": MSG_FOLLOWUP_WHOLESALER,
             })
+            _upsert_customer(
+                phone=phone,
+                last_message=text_body,
+                buyer_type="wholesaler",
+                lead_status="WAITING_DESIGN",
+            )
             await _reply(phone, MSG_WHOLESALER_STEP1)
 
         elif choice in ("2", "3"):
@@ -228,34 +309,66 @@ async def _handle_message(phone: str, msg_type: str, text_body: str) -> None:
                 "state": STATE_DONE,
                 "buyer_type": buyer_type,
             })
+            _upsert_customer(
+                phone=phone,
+                last_message=text_body,
+                buyer_type=buyer_type,
+                lead_status="WEBSITE_SENT",
+            )
             await _reply(phone, MSG_RETAIL_PERSONAL)
 
         else:
+            _upsert_customer(
+                phone=phone,
+                last_message=text_body,
+                lead_status="WAITING_BUYER_TYPE",
+            )
             await _reply(phone, MSG_INVALID_CHOICE)
         return
 
     # ── WHOLESALER_AWAITING_DESIGN ────────────────────────────────────────────
-    # Customer may send 1 image or 10 images.
-    # We update state first so MOQ question is sent only once.
     if state == STATE_WHOLESALER_AWAITING_DESIGN:
         _update_session(phone, {"state": STATE_WHOLESALER_AWAITING_MOQ})
+        _upsert_customer(
+            phone=phone,
+            last_message=text_body,
+            buyer_type="wholesaler",
+            lead_status="WAITING_MOQ",
+        )
         await _reply(phone, MSG_WHOLESALER_STEP2)
         return
 
     # ── WHOLESALER_AWAITING_MOQ ───────────────────────────────────────────────
-    # Only text should be treated as quantity.
-    # Extra images after first image should not trigger closing message.
     if state == STATE_WHOLESALER_AWAITING_MOQ:
+        # Extra images should only update customer last_message, not close the flow.
         if msg_type == "text":
             _update_session(phone, {"state": STATE_DONE})
+            _upsert_customer(
+                phone=phone,
+                last_message=text_body,
+                buyer_type="wholesaler",
+                lead_status="QUALIFIED_LEAD",
+            )
             await _reply(
                 phone,
                 "Thank you! 🙏 Our team will review your requirement and get back to you shortly."
+            )
+        else:
+            _upsert_customer(
+                phone=phone,
+                last_message=text_body,
+                buyer_type="wholesaler",
+                lead_status="WAITING_MOQ",
             )
         return
 
     # ── DONE ──────────────────────────────────────────────────────────────────
     if state == STATE_DONE:
+        _upsert_customer(
+            phone=phone,
+            last_message=text_body,
+            buyer_type=session.get("buyer_type"),
+        )
         await _reply(
             phone,
             "Thank you for reaching out to Rhinestone Heritage. "
@@ -366,6 +479,6 @@ async def receive_webhook(request: Request):
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "status":  "running",
     }
