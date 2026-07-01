@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v0.5
+RH Business OS — WhatsApp AI Bot v0.6
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -43,6 +43,7 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "")
 MESSAGES_FILE   = os.getenv("MESSAGES_FILE", "data/messages.json")
 SESSIONS_FILE   = os.getenv("SESSIONS_FILE", "data/sessions.json")
 CUSTOMERS_FILE  = os.getenv("CUSTOMERS_FILE", "data/customers.json")
+DASHBOARD_KEY  = os.getenv("DASHBOARD_KEY", "RH2026")
 
 # ── States ────────────────────────────────────────────────────────────────────
 STATE_NEW                    = "NEW"
@@ -110,9 +111,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.5",
+    title="RH Business OS — WhatsApp AI Bot v0.6",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 whatsapp = WhatsAppService(
@@ -477,7 +478,22 @@ async def receive_webhook(request: Request):
 
 # ── CRM Dashboard v0.5 ────────────────────────────────────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(q: str = "", filter: str = "all"):
+async def dashboard(q: str = "", filter: str = "all", key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(
+            content="""
+            <!doctype html>
+            <html><head><title>Access Denied</title></head>
+            <body style="font-family:Arial;padding:40px;background:#f7f7f7;">
+                <div style="max-width:500px;margin:auto;background:white;padding:30px;border-radius:14px;text-align:center;">
+                    <h2>Access Denied</h2>
+                    <p>Please open dashboard with your secure key.</p>
+                    <p style="color:#777;">Example: /dashboard?key=YOUR_KEY</p>
+                </div>
+            </body></html>
+            """,
+            status_code=401,
+        )
     customers = _load_customers()
     rows = list(customers.values())
 
@@ -532,7 +548,7 @@ async def dashboard(q: str = "", filter: str = "all"):
 
     def filter_link(label, key):
         active = "active" if filter == key else ""
-        return f'<a class="filter {active}" href="/dashboard?filter={key}&q={esc(q)}">{label}</a>'
+        return f'<a class="filter {active}" href="/dashboard?key={esc(DASHBOARD_KEY)}&filter={key}&q={esc(q)}">{label}</a>'
 
     rows_html = ""
     for c in sorted(rows, key=lambda x: x.get("last_seen", ""), reverse=True):
@@ -704,8 +720,8 @@ async def dashboard(q: str = "", filter: str = "all"):
                 <div class="subtitle">WhatsApp leads dashboard • Auto-refresh every 30 seconds</div>
             </div>
             <div class="top-actions">
-                <a class="refresh" href="/dashboard">Reset</a>
-                <a class="refresh" href="/dashboard?filter={esc(filter)}&q={esc(q)}">Refresh</a>
+                <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}">Reset</a>
+                <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}&filter={esc(filter)}&q={esc(q)}">Refresh</a>
             </div>
         </div>
 
@@ -720,6 +736,7 @@ async def dashboard(q: str = "", filter: str = "all"):
 
         <div class="toolbar">
             <form class="search" method="get" action="/dashboard">
+                <input type="hidden" name="key" value="{esc(DASHBOARD_KEY)}">
                 <input type="hidden" name="filter" value="{esc(filter)}">
                 <input name="q" value="{esc(q)}" placeholder="Search phone, buyer type, status, message...">
                 <button type="submit">Search</button>
@@ -746,6 +763,6 @@ async def dashboard(q: str = "", filter: str = "all"):
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "status":  "running",
     }
