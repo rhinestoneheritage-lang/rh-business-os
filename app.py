@@ -195,17 +195,19 @@ def _append_message(record: dict) -> None:
 async def _handle_message(phone: str, msg_type: str, text_body: str) -> None:
     """
     Core state machine.
-    Reads current state, decides reply, sends it, updates state.
+    Important fix:
+    - Update customer state BEFORE sending reply.
+    - This prevents duplicate MOQ messages when customer sends multiple images.
     """
     session = _get_session(phone)
-    state   = session.get("state", STATE_NEW)
+    state = session.get("state", STATE_NEW)
 
     logger.info("📊 State | phone=%s state=%s", phone, state)
 
     # ── NEW: first contact ────────────────────────────────────────────────────
     if state == STATE_NEW:
-        await _reply(phone, MSG_WELCOME)
         _update_session(phone, {"state": STATE_AWAITING_BUYER_TYPE})
+        await _reply(phone, MSG_WELCOME)
         return
 
     # ── AWAITING_BUYER_TYPE ───────────────────────────────────────────────────
@@ -213,44 +215,46 @@ async def _handle_message(phone: str, msg_type: str, text_body: str) -> None:
         choice = text_body.strip() if msg_type == "text" else ""
 
         if choice == "1":
-            # Wholesaler / Garment Manufacturer
-            await _reply(phone, MSG_WHOLESALER_STEP1)
             _update_session(phone, {
-                "state":      STATE_WHOLESALER_AWAITING_DESIGN,
+                "state": STATE_WHOLESALER_AWAITING_DESIGN,
                 "buyer_type": "wholesaler",
-                # Store follow-up template now; scheduling handled manually / v0.3+
                 "followup_template": MSG_FOLLOWUP_WHOLESALER,
             })
+            await _reply(phone, MSG_WHOLESALER_STEP1)
 
         elif choice in ("2", "3"):
             buyer_type = "retailer" if choice == "2" else "personal"
-            await _reply(phone, MSG_RETAIL_PERSONAL)
             _update_session(phone, {
-                "state":      STATE_DONE,
+                "state": STATE_DONE,
                 "buyer_type": buyer_type,
             })
+            await _reply(phone, MSG_RETAIL_PERSONAL)
 
         else:
-            # Non-text or invalid choice
             await _reply(phone, MSG_INVALID_CHOICE)
         return
 
-    # ── WHOLESALER_AWAITING_DESIGN: any message (text or image) ──────────────
+    # ── WHOLESALER_AWAITING_DESIGN ────────────────────────────────────────────
+    # Customer may send 1 image or 10 images.
+    # We update state first so MOQ question is sent only once.
     if state == STATE_WHOLESALER_AWAITING_DESIGN:
-        await _reply(phone, MSG_WHOLESALER_STEP2)
         _update_session(phone, {"state": STATE_WHOLESALER_AWAITING_MOQ})
+        await _reply(phone, MSG_WHOLESALER_STEP2)
         return
 
-    # ── WHOLESALER_AWAITING_MOQ: MOQ received, close flow ─────────────────────
+    # ── WHOLESALER_AWAITING_MOQ ───────────────────────────────────────────────
+    # Only text should be treated as quantity.
+    # Extra images after first image should not trigger closing message.
     if state == STATE_WHOLESALER_AWAITING_MOQ:
-        await _reply(
-            phone,
-            "Thank you! 🙏 Our team will review your requirement and get back to you shortly."
-        )
-        _update_session(phone, {"state": STATE_DONE})
+        if msg_type == "text":
+            _update_session(phone, {"state": STATE_DONE})
+            await _reply(
+                phone,
+                "Thank you! 🙏 Our team will review your requirement and get back to you shortly."
+            )
         return
 
-    # ── DONE: conversation complete ───────────────────────────────────────────
+    # ── DONE ──────────────────────────────────────────────────────────────────
     if state == STATE_DONE:
         await _reply(
             phone,
@@ -258,7 +262,6 @@ async def _handle_message(phone: str, msg_type: str, text_body: str) -> None:
             "Our team will be in touch with you. 🙏"
         )
         return
-
 
 async def _reply(phone: str, text: str) -> None:
     """Send a text reply and log the outcome."""
