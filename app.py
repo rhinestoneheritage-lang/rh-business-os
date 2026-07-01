@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v0.4
+RH Business OS — WhatsApp AI Bot v0.5
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -110,9 +110,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.4",
+    title="RH Business OS — WhatsApp AI Bot v0.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -475,9 +475,9 @@ async def receive_webhook(request: Request):
 
 
 
-# ── Simple CRM Dashboard ──────────────────────────────────────────────────────
+# ── CRM Dashboard v0.5 ────────────────────────────────────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard():
+async def dashboard(q: str = "", filter: str = "all"):
     customers = _load_customers()
     rows = list(customers.values())
 
@@ -488,27 +488,69 @@ async def dashboard():
     qualified = sum(1 for c in rows if c.get("lead_status") == "QUALIFIED_LEAD")
     website_sent = sum(1 for c in rows if c.get("lead_status") == "WEBSITE_SENT")
 
+    query = (q or "").strip().lower()
+
+    if filter == "wholesaler":
+        rows = [c for c in rows if c.get("buyer_type") == "wholesaler"]
+    elif filter == "retailer":
+        rows = [c for c in rows if c.get("buyer_type") == "retailer"]
+    elif filter == "personal":
+        rows = [c for c in rows if c.get("buyer_type") == "personal"]
+    elif filter == "qualified":
+        rows = [c for c in rows if c.get("lead_status") == "QUALIFIED_LEAD"]
+    elif filter == "website_sent":
+        rows = [c for c in rows if c.get("lead_status") == "WEBSITE_SENT"]
+
+    if query:
+        rows = [
+            c for c in rows
+            if query in str(c.get("phone_number", "")).lower()
+            or query in str(c.get("buyer_type", "")).lower()
+            or query in str(c.get("lead_status", "")).lower()
+            or query in str(c.get("last_message", "")).lower()
+        ]
+
     def esc(value):
         if value is None:
             return ""
-        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    def status_class(status):
+        status = status or ""
+        if status == "QUALIFIED_LEAD":
+            return "qualified"
+        if status == "WEBSITE_SENT":
+            return "website"
+        if status in ("WAITING_DESIGN", "WAITING_MOQ", "WAITING_BUYER_TYPE"):
+            return "waiting"
+        return "new"
+
+    def short_date(value):
+        if not value:
+            return ""
+        return value.replace("T", " ").replace("Z", "")[:19]
+
+    def filter_link(label, key):
+        active = "active" if filter == key else ""
+        return f'<a class="filter {active}" href="/dashboard?filter={key}&q={esc(q)}">{label}</a>'
 
     rows_html = ""
     for c in sorted(rows, key=lambda x: x.get("last_seen", ""), reverse=True):
+        status = c.get("lead_status") or ""
         rows_html += f"""
         <tr>
-            <td>{esc(c.get("phone_number"))}</td>
+            <td class="phone">{esc(c.get("phone_number"))}</td>
             <td><span class="pill buyer">{esc(c.get("buyer_type") or "unknown")}</span></td>
-            <td><span class="pill status">{esc(c.get("lead_status") or "")}</span></td>
-            <td>{esc(c.get("last_message"))}</td>
+            <td><span class="pill {status_class(status)}">{esc(status)}</span></td>
+            <td class="lastmsg">{esc(c.get("last_message"))}</td>
             <td>{esc(c.get("message_count"))}</td>
-            <td>{esc(c.get("first_seen"))}</td>
-            <td>{esc(c.get("last_seen"))}</td>
+            <td>{esc(short_date(c.get("first_seen")))}</td>
+            <td>{esc(short_date(c.get("last_seen")))}</td>
         </tr>
         """
 
     if not rows:
-        main_content = '<div class="empty">No leads yet. Send a WhatsApp message to test.</div>'
+        main_content = '<div class="empty">No matching leads found.</div>'
     else:
         main_content = f"""
         <table>
@@ -533,6 +575,7 @@ async def dashboard():
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="refresh" content="30">
         <title>RH Business OS CRM</title>
         <style>
             body {{
@@ -550,11 +593,20 @@ async def dashboard():
             }}
             h1 {{ margin: 0; font-size: 28px; }}
             .subtitle {{ color: #666; margin-top: 6px; }}
+            .top-actions {{ display: flex; gap: 10px; align-items: center; }}
+            .refresh {{
+                color: #111;
+                text-decoration: none;
+                background: white;
+                padding: 10px 14px;
+                border-radius: 10px;
+                border: 1px solid #ddd;
+            }}
             .cards {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
                 gap: 14px;
-                margin-bottom: 24px;
+                margin-bottom: 20px;
             }}
             .card {{
                 background: white;
@@ -565,6 +617,41 @@ async def dashboard():
             }}
             .card-title {{ color: #666; font-size: 13px; }}
             .card-value {{ font-size: 28px; font-weight: bold; margin-top: 8px; }}
+            .toolbar {{
+                display: flex;
+                gap: 12px;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 16px;
+                flex-wrap: wrap;
+            }}
+            .search {{ display: flex; gap: 8px; flex: 1; min-width: 260px; }}
+            input {{
+                width: 100%;
+                padding: 12px 14px;
+                border: 1px solid #ddd;
+                border-radius: 10px;
+                font-size: 14px;
+            }}
+            button {{
+                padding: 12px 16px;
+                border: 0;
+                background: #111;
+                color: white;
+                border-radius: 10px;
+                cursor: pointer;
+            }}
+            .filters {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+            .filter {{
+                text-decoration: none;
+                color: #111;
+                background: white;
+                border: 1px solid #ddd;
+                padding: 9px 12px;
+                border-radius: 999px;
+                font-size: 13px;
+            }}
+            .filter.active {{ background: #111; color: white; border-color: #111; }}
             table {{
                 width: 100%;
                 border-collapse: collapse;
@@ -581,6 +668,8 @@ async def dashboard():
                 vertical-align: top;
             }}
             th {{ background: #111; color: white; font-weight: 600; }}
+            .phone {{ font-weight: 700; }}
+            .lastmsg {{ max-width: 520px; }}
             .pill {{
                 display: inline-block;
                 padding: 5px 9px;
@@ -590,7 +679,10 @@ async def dashboard():
                 background: #eee;
             }}
             .buyer {{ background: #e8f0ff; }}
-            .status {{ background: #ecfdf3; }}
+            .qualified {{ background: #dcfce7; color: #166534; }}
+            .website {{ background: #fff7ed; color: #9a3412; }}
+            .waiting {{ background: #fef9c3; color: #854d0e; }}
+            .new {{ background: #eef2ff; color: #3730a3; }}
             .empty {{
                 background: white;
                 padding: 30px;
@@ -598,13 +690,10 @@ async def dashboard():
                 text-align: center;
                 color: #666;
             }}
-            .refresh {{
-                color: #111;
-                text-decoration: none;
-                background: white;
-                padding: 10px 14px;
-                border-radius: 10px;
-                border: 1px solid #ddd;
+            @media (max-width: 700px) {{
+                body {{ padding: 14px; }}
+                .header {{ align-items: flex-start; flex-direction: column; gap: 12px; }}
+                table {{ display: block; overflow-x: auto; }}
             }}
         </style>
     </head>
@@ -612,9 +701,12 @@ async def dashboard():
         <div class="header">
             <div>
                 <h1>RH Business OS CRM</h1>
-                <div class="subtitle">WhatsApp leads dashboard</div>
+                <div class="subtitle">WhatsApp leads dashboard • Auto-refresh every 30 seconds</div>
             </div>
-            <a class="refresh" href="/dashboard">Refresh</a>
+            <div class="top-actions">
+                <a class="refresh" href="/dashboard">Reset</a>
+                <a class="refresh" href="/dashboard?filter={esc(filter)}&q={esc(q)}">Refresh</a>
+            </div>
         </div>
 
         <div class="cards">
@@ -624,6 +716,23 @@ async def dashboard():
             <div class="card"><div class="card-title">Personal Buyer</div><div class="card-value">{personal}</div></div>
             <div class="card"><div class="card-title">Qualified Leads</div><div class="card-value">{qualified}</div></div>
             <div class="card"><div class="card-title">Website Sent</div><div class="card-value">{website_sent}</div></div>
+        </div>
+
+        <div class="toolbar">
+            <form class="search" method="get" action="/dashboard">
+                <input type="hidden" name="filter" value="{esc(filter)}">
+                <input name="q" value="{esc(q)}" placeholder="Search phone, buyer type, status, message...">
+                <button type="submit">Search</button>
+            </form>
+
+            <div class="filters">
+                {filter_link("All", "all")}
+                {filter_link("Wholesaler", "wholesaler")}
+                {filter_link("Retailer", "retailer")}
+                {filter_link("Personal", "personal")}
+                {filter_link("Qualified", "qualified")}
+                {filter_link("Website Sent", "website_sent")}
+            </div>
         </div>
 
         {main_content}
@@ -637,6 +746,6 @@ async def dashboard():
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "status":  "running",
     }
