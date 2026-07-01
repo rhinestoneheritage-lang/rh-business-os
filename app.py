@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v0.6
+RH Business OS — WhatsApp AI Bot v0.7
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -18,11 +18,13 @@ whatsapp_service.py is UNCHANGED from v0.1.
 import json
 import logging
 import os
+import csv
+import io
 from datetime import datetime
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from whatsapp_service import WhatsAppService
 
@@ -111,9 +113,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.6",
+    title="RH Business OS — WhatsApp AI Bot v0.7",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="0.6.0",
+    version="0.7.0",
 )
 
 whatsapp = WhatsAppService(
@@ -720,6 +722,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                 <div class="subtitle">WhatsApp leads dashboard • Auto-refresh every 30 seconds</div>
             </div>
             <div class="top-actions">
+                <a class="refresh" href="/dashboard/export?key={esc(DASHBOARD_KEY)}">Download CSV</a>
                 <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}">Reset</a>
                 <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}&filter={esc(filter)}&q={esc(q)}">Refresh</a>
             </div>
@@ -758,11 +761,50 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     """
     return HTMLResponse(content=html)
 
+
+# ── Export CRM Leads as CSV ───────────────────────────────────────────────────
+@app.get("/dashboard/export")
+async def export_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return JSONResponse(content={"error": "Access denied"}, status_code=401)
+
+    customers = _load_customers()
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "Phone Number",
+        "Buyer Type",
+        "Lead Status",
+        "Last Message",
+        "Message Count",
+        "First Seen",
+        "Last Seen",
+    ])
+
+    for c in sorted(customers.values(), key=lambda x: x.get("last_seen", ""), reverse=True):
+        writer.writerow([
+            c.get("phone_number", ""),
+            c.get("buyer_type", ""),
+            c.get("lead_status", ""),
+            c.get("last_message", ""),
+            c.get("message_count", ""),
+            c.get("first_seen", ""),
+            c.get("last_seen", ""),
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=rh_leads.csv"},
+    )
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.6.0",
+        "version": "0.7.0",
         "status":  "running",
     }
