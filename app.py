@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v0.3
+RH Business OS — WhatsApp AI Bot v0.4
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -22,7 +22,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from whatsapp_service import WhatsAppService
 
@@ -110,9 +110,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.3",
+    title="RH Business OS — WhatsApp AI Bot v0.4",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 whatsapp = WhatsAppService(
@@ -474,11 +474,169 @@ async def receive_webhook(request: Request):
     return JSONResponse(content={"status": "ok"}, status_code=200)
 
 
+
+# ── Simple CRM Dashboard ──────────────────────────────────────────────────────
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    customers = _load_customers()
+    rows = list(customers.values())
+
+    total = len(rows)
+    wholesalers = sum(1 for c in rows if c.get("buyer_type") == "wholesaler")
+    retailers = sum(1 for c in rows if c.get("buyer_type") == "retailer")
+    personal = sum(1 for c in rows if c.get("buyer_type") == "personal")
+    qualified = sum(1 for c in rows if c.get("lead_status") == "QUALIFIED_LEAD")
+    website_sent = sum(1 for c in rows if c.get("lead_status") == "WEBSITE_SENT")
+
+    def esc(value):
+        if value is None:
+            return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+    rows_html = ""
+    for c in sorted(rows, key=lambda x: x.get("last_seen", ""), reverse=True):
+        rows_html += f"""
+        <tr>
+            <td>{esc(c.get("phone_number"))}</td>
+            <td><span class="pill buyer">{esc(c.get("buyer_type") or "unknown")}</span></td>
+            <td><span class="pill status">{esc(c.get("lead_status") or "")}</span></td>
+            <td>{esc(c.get("last_message"))}</td>
+            <td>{esc(c.get("message_count"))}</td>
+            <td>{esc(c.get("first_seen"))}</td>
+            <td>{esc(c.get("last_seen"))}</td>
+        </tr>
+        """
+
+    if not rows:
+        main_content = '<div class="empty">No leads yet. Send a WhatsApp message to test.</div>'
+    else:
+        main_content = f"""
+        <table>
+            <thead>
+                <tr>
+                    <th>Phone</th>
+                    <th>Buyer Type</th>
+                    <th>Status</th>
+                    <th>Last Message</th>
+                    <th>Messages</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                </tr>
+            </thead>
+            <tbody>{rows_html}</tbody>
+        </table>
+        """
+
+    html = f"""
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>RH Business OS CRM</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background: #f7f7f7;
+                margin: 0;
+                padding: 24px;
+                color: #111;
+            }}
+            .header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 22px;
+            }}
+            h1 {{ margin: 0; font-size: 28px; }}
+            .subtitle {{ color: #666; margin-top: 6px; }}
+            .cards {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 14px;
+                margin-bottom: 24px;
+            }}
+            .card {{
+                background: white;
+                border: 1px solid #e5e5e5;
+                border-radius: 14px;
+                padding: 18px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            }}
+            .card-title {{ color: #666; font-size: 13px; }}
+            .card-value {{ font-size: 28px; font-weight: bold; margin-top: 8px; }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                background: white;
+                border-radius: 14px;
+                overflow: hidden;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            }}
+            th, td {{
+                padding: 12px 14px;
+                border-bottom: 1px solid #eee;
+                text-align: left;
+                font-size: 14px;
+                vertical-align: top;
+            }}
+            th {{ background: #111; color: white; font-weight: 600; }}
+            .pill {{
+                display: inline-block;
+                padding: 5px 9px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: 600;
+                background: #eee;
+            }}
+            .buyer {{ background: #e8f0ff; }}
+            .status {{ background: #ecfdf3; }}
+            .empty {{
+                background: white;
+                padding: 30px;
+                border-radius: 14px;
+                text-align: center;
+                color: #666;
+            }}
+            .refresh {{
+                color: #111;
+                text-decoration: none;
+                background: white;
+                padding: 10px 14px;
+                border-radius: 10px;
+                border: 1px solid #ddd;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div>
+                <h1>RH Business OS CRM</h1>
+                <div class="subtitle">WhatsApp leads dashboard</div>
+            </div>
+            <a class="refresh" href="/dashboard">Refresh</a>
+        </div>
+
+        <div class="cards">
+            <div class="card"><div class="card-title">Total Leads</div><div class="card-value">{total}</div></div>
+            <div class="card"><div class="card-title">Wholesaler / Manufacturer</div><div class="card-value">{wholesalers}</div></div>
+            <div class="card"><div class="card-title">Retailer</div><div class="card-value">{retailers}</div></div>
+            <div class="card"><div class="card-title">Personal Buyer</div><div class="card-value">{personal}</div></div>
+            <div class="card"><div class="card-title">Qualified Leads</div><div class="card-value">{qualified}</div></div>
+            <div class="card"><div class="card-title">Website Sent</div><div class="card-value">{website_sent}</div></div>
+        </div>
+
+        {main_content}
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "status":  "running",
     }
