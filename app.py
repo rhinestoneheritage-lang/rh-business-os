@@ -29,6 +29,59 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 
 from whatsapp_service import WhatsAppService
 
+
+# ── Premium Dark Theme Injector v10.2 ─────────────────────────────────────────
+# This keeps every existing page/route working, but forces one consistent
+# OREIUM black premium dashboard look across all HTML pages.
+_BaseHTMLResponse = HTMLResponse
+
+PREMIUM_DARK_THEME_CSS = """
+<style id="oreium-global-dark-theme">
+:root{--bg:#070A12;--panel:#0B1020;--panel2:#111827;--line:#243047;--text:#F8FAFC;--muted:#9CA3AF;--purple:#7C3AED;--blue:#1683FF;--green:#22C55E;--orange:#F97316;--pink:#EC4899;--danger:#EF4444;--shadow:0 20px 45px rgba(0,0,0,.28)}
+*{box-sizing:border-box} html{background:#070A12!important} body{background:radial-gradient(circle at 20% 0%,rgba(124,58,237,.18),transparent 30%),linear-gradient(180deg,#070A12,#050712)!important;color:var(--text)!important;font-family:Inter,Arial,sans-serif!important;margin:0!important;min-height:100vh!important} 
+a{color:#C084FC!important} h1,h2,h3,h4{color:#F8FAFC!important;letter-spacing:-.02em} p,div,span,td,th,label,small{border-color:rgba(255,255,255,.08)}
+body>h1,body>h2,body>p,body>form,body>table,body>.card,body>.top,body>.grid,body>.panel,body>.quote{max-width:1280px;margin-left:auto!important;margin-right:auto!important}
+.card,.panel,.quote,table,form:not(.search):not([style*="display:flex"]),.msg,.empty,.status-card,.kpi,.activity-item,.pro,div[style*="background:white"],div[style*="background: white"]{background:linear-gradient(180deg,rgba(17,24,39,.96),rgba(8,12,23,.96))!important;border:1px solid var(--line)!important;border-radius:18px!important;color:var(--text)!important;box-shadow:var(--shadow)!important}
+table{background:linear-gradient(180deg,rgba(17,24,39,.96),rgba(8,12,23,.96))!important;border-collapse:separate!important;border-spacing:0!important;overflow:hidden!important;border:1px solid var(--line)!important;border-radius:18px!important;box-shadow:var(--shadow)!important} th{background:rgba(124,58,237,.18)!important;color:#D8B4FE!important;font-weight:800!important} td{color:#E5E7EB!important;border-bottom:1px solid rgba(255,255,255,.07)!important} tr:hover td{background:rgba(124,58,237,.06)!important}
+input,select,textarea{background:#0A0F1D!important;color:#F8FAFC!important;border:1px solid var(--line)!important;border-radius:12px!important;outline:none!important} input::placeholder,textarea::placeholder{color:#6B7280!important} input:focus,select:focus,textarea:focus{border-color:#7C3AED!important;box-shadow:0 0 0 3px rgba(124,58,237,.18)!important}
+button,a.btn,.btn,.refresh,.filter,.chip{background:linear-gradient(135deg,#7C3AED,#4F46E5)!important;color:white!important;border:0!important;border-radius:12px!important;text-decoration:none!important;font-weight:800!important;box-shadow:0 12px 28px rgba(124,58,237,.25)!important} button:hover,a.btn:hover,.btn:hover,.refresh:hover,.filter:hover,.chip:hover{filter:brightness(1.12)!important;transform:translateY(-1px)}
+.filter:not(.active),.chip:not(.active),.refresh{background:#101827!important;border:1px solid var(--line)!important;color:#E5E7EB!important;box-shadow:none!important}.filter.active,.chip.active{background:linear-gradient(135deg,#7C3AED,#4F46E5)!important;color:white!important}
+.label,.subtitle,.msg-time,.card-title,.empty,.empty-small,small{color:var(--muted)!important}.value,.phone,.phone-link,b,strong{color:#F8FAFC!important}.pill,.mini-pill{border-radius:999px!important;font-weight:800!important}.buyer{background:rgba(124,58,237,.18)!important;color:#C084FC!important}.qualified,.green{background:rgba(34,197,94,.15)!important;color:#4ADE80!important}.website,.orange{background:rgba(249,115,22,.15)!important;color:#FB923C!important}.waiting,.yellow{background:rgba(250,204,21,.15)!important;color:#FDE047!important}.new,.blue{background:rgba(22,131,255,.15)!important;color:#60A5FA!important}.purple{background:rgba(124,58,237,.18)!important;color:#C084FC!important}
+.top,.header,.toolbar{background:transparent!important;color:var(--text)!important}.grid{gap:18px!important}.top a,.header a{margin:3px}.msg{margin-bottom:10px!important}.msg-body{color:#E5E7EB!important}.lastmsg{color:#D1D5DB!important}.card-value{color:#F8FAFC!important}
+body:not(:has(.app))::before{content:'OREIUM Business OS';display:block;max-width:1280px;margin:0 auto 18px auto;padding:22px 24px;border-bottom:1px solid var(--line);font-weight:900;font-size:24px;color:#F8FAFC;background:linear-gradient(90deg,rgba(124,58,237,.16),transparent);border-radius:0 0 18px 18px} body:not(:has(.app)){padding:24px!important}
+@media(max-width:800px){body:not(:has(.app)){padding:14px!important} table{display:block!important;overflow-x:auto!important}.grid{grid-template-columns:1fr!important}.top,.header,.toolbar{flex-direction:column!important;align-items:flex-start!important}}
+</style>
+"""
+
+
+def _apply_premium_dark_theme(content: str) -> str:
+    if not isinstance(content, str):
+        return content
+    low = content.lower()
+    if "oreium-global-dark-theme" in low:
+        return content
+    # Wrap plain error pages so they also match the premium UI.
+    if "<html" not in low:
+        safe = str(content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{PREMIUM_DARK_THEME_CSS}</head><body><div class='card' style='max-width:640px;margin:80px auto;padding:28px;'><h2>OREIUM Business OS</h2><p>{safe}</p><p><a class='btn' href='/dashboard?key={DASHBOARD_KEY}'>Back to Dashboard</a></p></div></body></html>"
+    if "</head>" in low:
+        idx = low.rfind("</head>")
+        return content[:idx] + PREMIUM_DARK_THEME_CSS + content[idx:]
+    return content.replace("<html", "<html", 1).replace(">", "><head>" + PREMIUM_DARK_THEME_CSS + "</head>", 1)
+
+
+class HTMLResponse(_BaseHTMLResponse):
+    def render(self, content) -> bytes:
+        if isinstance(content, (str, bytes)):
+            if isinstance(content, bytes):
+                try:
+                    content = content.decode(self.charset or "utf-8")
+                except Exception:
+                    return super().render(content)
+            content = _apply_premium_dark_theme(content)
+        return super().render(content)
+
+
 load_dotenv()
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -660,7 +713,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}.bottom-status{{grid-template-columns:repeat(2,1fr)}}}} @media(max-width:760px){{.app{{grid-template-columns:1fr}}.sidebar{{position:relative;height:auto}}.pro,.version{{display:none}}.topbar{{flex-direction:column;align-items:stretch}}.search-input{{width:100%}}.kpis{{grid-template-columns:1fr}}table{{display:block;overflow-x:auto}}}}
     </style></head><body><div class='app'><aside class='sidebar'><div class='brand'><div class='logo'>RH</div><div><h2>OREIUM</h2><small>BUSINESS OS</small></div></div>
     <a class='nav active' href='/dashboard?key={esc(DASHBOARD_KEY)}'><span>⌂</span>Dashboard</a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=followup_today'><span>☘</span>WhatsApp <b style='margin-left:auto;background:#7C3AED;padding:2px 8px;border-radius:999px;'>{today_followups}</b></a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified'><span>♙</span>CRM</a><a class='nav' href='/quotes?key={esc(DASHBOARD_KEY)}'><span>▾</span>Sales</a><a class='nav' href='/production?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Production</a><a class='nav' href='/inventory?key={esc(DASHBOARD_KEY)}'><span>□</span>Inventory</a><a class='nav' href='/staff?key={esc(DASHBOARD_KEY)}'><span>♧</span>HR</a><a class='nav' href='/reports?key={esc(DASHBOARD_KEY)}'><span>▥</span>Reports</a><a class='nav' href='/settings?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Settings</a>
-    <div class='pro'><div style='font-size:28px;'>♛</div><b>OREIUM PRO</b><p style='color:#9CA3AF;font-size:13px;'>Premium business dashboard</p><a class='btn primary' href='/system?key={esc(DASHBOARD_KEY)}'>System Center</a></div><div class='version'>v10.1.0 | Premium UI</div></aside>
+    <div class='pro'><div style='font-size:28px;'>♛</div><b>OREIUM PRO</b><p style='color:#9CA3AF;font-size:13px;'>Premium business dashboard</p><a class='btn primary' href='/system?key={esc(DASHBOARD_KEY)}'>System Center</a></div><div class='version'>v10.2.0 | Unified Premium UI</div></aside>
     <main class='main'><div class='topbar'><div><h1>Welcome back, Admin 👋</h1><div class='subtitle'>Here is what is happening in your business today.</div></div><div class='searchbar'><form method='get' action='/dashboard' style='display:flex;gap:10px;'><input type='hidden' name='key' value='{esc(DASHBOARD_KEY)}'><input type='hidden' name='filter' value='{esc(filter)}'><input class='search-input' name='q' value='{esc(q)}' placeholder='Search phone, status, message...'><button class='btn primary' type='submit'>Search</button></form><a class='btn' href='/dashboard/export?key={esc(DASHBOARD_KEY)}'>CSV</a></div></div>
     <section class='kpis'>{kpi('Total Leads', total, '₹', 'purple', '+18.6% vs last 7 days')}{kpi('New Leads', total, '👥', 'blue', str(wholesalers)+' wholesalers')}{kpi('Orders', order_confirmed, '🛍', 'green', 'Confirmed pipeline')}{kpi('Follow-ups', today_followups + missed_followups, '⏱', 'orange', str(missed_followups)+' missed')}{kpi('Pending Tasks', open_tasks, '☑', 'pink', 'Team work queue')}</section>
     <section class='grid'><div class='panel'><div class='panel-head'><h3>Business Overview</h3><a class='view' href='/reports?key={esc(DASHBOARD_KEY)}'>View Reports</a></div><div class='chart'></div></div><div class='panel'><div class='panel-head'><h3>Recent Activities</h3><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}'>View All</a></div>{recent_html}</div><div class='panel'><div class='panel-head'><h3>Pipeline Overview</h3></div><div class='donut'><div class='donut-inner'><span>Total Deals</span><b>{total}</b></div></div><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified' style='display:block;text-align:center;'>View Full Pipeline →</a></div></section>
@@ -3261,7 +3314,7 @@ async def phase10_export(key: str = ""):
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "10.0.0",
+        "version": "10.2.0",
         "status":  "running",
         "phase": "Phase 10 Production Ready",
     }
