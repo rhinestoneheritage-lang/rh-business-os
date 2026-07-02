@@ -136,7 +136,7 @@ MSG_FOLLOWUP_WHOLESALER = (
 app = FastAPI(
     title="RH Business OS — WhatsApp AI Bot v6.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="6.5.0",
+    version="7.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -2717,7 +2717,7 @@ async def save_broadcast_queue(key: str = "", audience: str = Form(""), schedule
 async def data_export(key: str = ""):
     if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
     bundle = {
-        "exported_at": datetime.utcnow().isoformat()+"Z", "version": "6.5.0",
+        "exported_at": datetime.utcnow().isoformat()+"Z", "version": "7.5.0",
         "customers": _load_customers(), "documents": _json_load(DOCUMENTS_FILE, {}),
         "design_requests": _json_load(DESIGN_REQUESTS_FILE, {}), "approvals": _json_load(APPROVALS_FILE, {}),
         "dispatch": _json_load(DISPATCH_FILE, {}), "payment_reminders": _json_load(PAYMENT_REMINDERS_FILE, {}),
@@ -2927,7 +2927,228 @@ async def ai_export(key: str = ""):
     customers = _load_customers(); lead_scores = {}
     for phone,c in customers.items():
         score, reasons = _lead_score(c); lead_scores[phone] = {"score": score, "reasons": reasons}
-    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version": "6.5.0", "lead_scores": lead_scores, "ai_settings": _ai_settings(), "suggestions": _json_load(AI_SUGGESTIONS_FILE, {}), "smart_reminders": _json_load(SMART_REMINDERS_FILE, {}), "auto_quote_suggestions": _json_load(AUTO_QUOTES_FILE, {})})
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version": "7.5.0", "lead_scores": lead_scores, "ai_settings": _ai_settings(), "suggestions": _json_load(AI_SUGGESTIONS_FILE, {}), "smart_reminders": _json_load(SMART_REMINDERS_FILE, {}), "auto_quote_suggestions": _json_load(AUTO_QUOTES_FILE, {})})
+
+
+
+
+# ── Phase 7 Enterprise Controls v7.5 ─────────────────────────────────────────
+# This layer keeps the existing dashboard key system safe, while preparing the
+# app for proper multi-user login later. It does not break older CRM pages.
+ENTERPRISE_USERS_FILE = os.getenv("ENTERPRISE_USERS_FILE", "data/enterprise_users.json")
+ENTERPRISE_ROLES_FILE = os.getenv("ENTERPRISE_ROLES_FILE", "data/enterprise_roles.json")
+ENTERPRISE_API_KEYS_FILE = os.getenv("ENTERPRISE_API_KEYS_FILE", "data/enterprise_api_keys.json")
+ENTERPRISE_EMAIL_FILE = os.getenv("ENTERPRISE_EMAIL_FILE", "data/email_notifications.json")
+ENTERPRISE_BACKUP_SCHEDULE_FILE = os.getenv("ENTERPRISE_BACKUP_SCHEDULE_FILE", "data/backup_schedule.json")
+ENTERPRISE_SETTINGS_FILE = os.getenv("ENTERPRISE_SETTINGS_FILE", "data/enterprise_settings.json")
+
+DEFAULT_ROLES = {
+    "Admin": ["all"],
+    "Sales": ["dashboard", "customers", "followups", "quotes", "orders", "broadcast"],
+    "Designer": ["customers", "design_requests", "approvals", "production"],
+    "Production": ["orders", "production", "dispatch", "inventory"],
+    "Accounts": ["quotes", "invoices", "payments", "expenses", "reports"],
+    "Viewer": ["dashboard", "reports"],
+}
+
+
+def _enterprise_roles() -> dict:
+    roles = _json_load(ENTERPRISE_ROLES_FILE, {})
+    if not roles:
+        roles = {name: {"role_name": name, "permissions": perms, "created_at": datetime.utcnow().isoformat()+"Z"} for name, perms in DEFAULT_ROLES.items()}
+        _json_save(ENTERPRISE_ROLES_FILE, roles)
+    return roles
+
+
+def _enterprise_users() -> dict:
+    users = _json_load(ENTERPRISE_USERS_FILE, {})
+    if not users:
+        uid = _now_id("USR")
+        users[uid] = {
+            "user_id": uid,
+            "name": "Aquib",
+            "email": "",
+            "role": "Admin",
+            "status": "ACTIVE",
+            "created_at": datetime.utcnow().isoformat()+"Z",
+        }
+        _json_save(ENTERPRISE_USERS_FILE, users)
+    return users
+
+
+def _phase7_nav() -> str:
+    k = _safe_html(DASHBOARD_KEY)
+    return f"""
+    <p class='nav'>
+      <a href='/dashboard?key={k}'>CRM</a>
+      <a href='/enterprise?key={k}'>Enterprise</a>
+      <a href='/enterprise/users?key={k}'>Users</a>
+      <a href='/enterprise/roles?key={k}'>Roles</a>
+      <a href='/enterprise/backup-scheduler?key={k}'>Backup Scheduler</a>
+      <a href='/enterprise/api-keys?key={k}'>API Keys</a>
+      <a href='/enterprise/email?key={k}'>Email Alerts</a>
+      <a href='/enterprise/broadcast-scheduler?key={k}'>Broadcast Scheduler</a>
+      <a href='/enterprise/system?key={k}'>System</a>
+    </p>"""
+
+
+def _phase7_style() -> str:
+    return """
+    <style>
+      body{font-family:Arial;background:#f7f7f7;margin:0;padding:24px;color:#111} h1{margin:0 0 8px}
+      .nav{display:flex;gap:8px;flex-wrap:wrap}.nav a,.btn{background:#111;color:white;padding:9px 12px;border-radius:10px;text-decoration:none;display:inline-block;border:0}
+      .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0}.card{background:white;border:1px solid #e5e5e5;border-radius:14px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+      table{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}th,td{padding:11px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}th{background:#111;color:white}
+      input,select,textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;box-sizing:border-box}button{background:#111;color:white;border:0;border-radius:10px;padding:10px 14px;cursor:pointer}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.muted{color:#666}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#eee;font-size:12px;font-weight:700}
+      @media(max-width:800px){body{padding:14px}.grid{grid-template-columns:1fr}table{display:block;overflow-x:auto}.nav a{width:100%;box-sizing:border-box}}
+    </style>"""
+
+
+@app.get("/enterprise", response_class=HTMLResponse)
+async def enterprise_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    users = _enterprise_users(); roles = _enterprise_roles()
+    api_keys = _json_load(ENTERPRISE_API_KEYS_FILE, {})
+    email_rules = _json_load(ENTERPRISE_EMAIL_FILE, {})
+    backup = _json_load(ENTERPRISE_BACKUP_SCHEDULE_FILE, {})
+    broadcasts = _json_load(BROADCAST_QUEUE_FILE, {})
+    active_users = sum(1 for u in users.values() if u.get('status') == 'ACTIVE')
+    scheduled_broadcasts = sum(1 for b in broadcasts.values() if b.get('schedule_at'))
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Enterprise Phase 7</title>{_phase7_style()}</head><body>
+    <h1>Phase 7 — Enterprise Controls v7.5</h1><div class='muted'>Multi-user foundation, roles, backup scheduler, API integrations, email alerts, broadcast scheduler and mobile polish.</div>{_phase7_nav()}
+    <div class='cards'>
+      <div class='card'><b>Active Users</b><h2>{active_users}</h2></div><div class='card'><b>Roles</b><h2>{len(roles)}</h2></div><div class='card'><b>API Keys</b><h2>{len(api_keys)}</h2></div><div class='card'><b>Email Rules</b><h2>{len(email_rules)}</h2></div><div class='card'><b>Backup</b><h2>{_safe_html(backup.get('frequency','Not set'))}</h2></div><div class='card'><b>Scheduled Broadcasts</b><h2>{scheduled_broadcasts}</h2></div>
+    </div><div class='card'><h2>Important</h2><p>Dashboard key security is still active. Phase 7 adds enterprise records and permissions foundation. Full password login can be connected later without breaking current CRM links.</p></div></body></html>""")
+
+
+@app.get("/enterprise/users", response_class=HTMLResponse)
+async def enterprise_users_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    users = _enterprise_users(); roles = _enterprise_roles()
+    rows = ''.join(f"<tr><td>{_safe_html(u.get('name'))}</td><td>{_safe_html(u.get('email'))}</td><td><span class='pill'>{_safe_html(u.get('role'))}</span></td><td>{_safe_html(u.get('status'))}</td><td>{_safe_html(u.get('created_at'))}</td><td><form method='post' action='/enterprise/users/{_safe_html(uid)}/toggle?key={_safe_html(DASHBOARD_KEY)}'><button>{'Deactivate' if u.get('status')=='ACTIVE' else 'Activate'}</button></form></td></tr>" for uid,u in users.items())
+    role_opts = ''.join(f"<option>{_safe_html(r)}</option>" for r in roles.keys())
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>Multi-user Login Foundation</h1>{_phase7_nav()}<div class='grid'><div class='card'><h2>Add User</h2><form method='post' action='/enterprise/users/add?key={_safe_html(DASHBOARD_KEY)}'><label>Name</label><input name='name' required><br><br><label>Email</label><input name='email'><br><br><label>Role</label><select name='role'>{role_opts}</select><br><br><button>Add User</button></form></div><div class='card'><h2>Login Note</h2><p>This version stores users/roles safely. Current access still uses <b>DASHBOARD_KEY</b>. Later we can add password login screen and sessions.</p></div></div><br><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Action</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/enterprise/users/add")
+async def enterprise_user_add(key: str = "", name: str = Form(""), email: str = Form(""), role: str = Form("Viewer")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    users = _enterprise_users(); uid = _now_id("USR")
+    users[uid] = {"user_id": uid, "name": name.strip() or "New User", "email": email.strip(), "role": role, "status": "ACTIVE", "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(ENTERPRISE_USERS_FILE, users); _audit("enterprise_user_added", users[uid])
+    return RedirectResponse(url=f"/enterprise/users?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/enterprise/users/{user_id}/toggle")
+async def enterprise_user_toggle(user_id: str, key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    users = _enterprise_users()
+    if user_id in users:
+        users[user_id]['status'] = 'INACTIVE' if users[user_id].get('status') == 'ACTIVE' else 'ACTIVE'
+        users[user_id]['updated_at'] = datetime.utcnow().isoformat()+"Z"
+        _json_save(ENTERPRISE_USERS_FILE, users); _audit("enterprise_user_toggle", {"user_id": user_id, "status": users[user_id]['status']})
+    return RedirectResponse(url=f"/enterprise/users?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/enterprise/roles", response_class=HTMLResponse)
+async def enterprise_roles_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    roles = _enterprise_roles()
+    rows = ''.join(f"<tr><td><b>{_safe_html(r.get('role_name'))}</b></td><td>{_safe_html(', '.join(r.get('permissions', [])))}</td><td>{_safe_html(r.get('created_at'))}</td></tr>" for r in roles.values())
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>Roles & Permissions</h1>{_phase7_nav()}<div class='card'><form method='post' action='/enterprise/roles/add?key={_safe_html(DASHBOARD_KEY)}'><label>Role Name</label><input name='role_name' placeholder='Example: Marketing'><br><br><label>Permissions comma separated</label><input name='permissions' placeholder='dashboard,customers,broadcast,reports'><br><br><button>Add / Update Role</button></form></div><br><table><tr><th>Role</th><th>Permissions</th><th>Created</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/enterprise/roles/add")
+async def enterprise_role_add(key: str = "", role_name: str = Form(""), permissions: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    roles = _enterprise_roles(); name = role_name.strip() or "Custom"
+    roles[name] = {"role_name": name, "permissions": [p.strip() for p in permissions.split(',') if p.strip()], "created_at": datetime.utcnow().isoformat()+"Z", "updated_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(ENTERPRISE_ROLES_FILE, roles); _audit("enterprise_role_saved", roles[name])
+    return RedirectResponse(url=f"/enterprise/roles?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/enterprise/backup-scheduler", response_class=HTMLResponse)
+async def enterprise_backup_scheduler(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    s = _json_load(ENTERPRISE_BACKUP_SCHEDULE_FILE, {"frequency":"DAILY", "time":"23:00", "enabled": False, "keep_days": 30})
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>Backup Scheduler</h1>{_phase7_nav()}<div class='card'><form method='post' action='/enterprise/backup-scheduler/save?key={_safe_html(DASHBOARD_KEY)}'><label>Frequency</label><select name='frequency'><option {'selected' if s.get('frequency')=='DAILY' else ''}>DAILY</option><option {'selected' if s.get('frequency')=='WEEKLY' else ''}>WEEKLY</option></select><br><br><label>Backup Time</label><input name='time' value='{_safe_html(s.get('time'))}'><br><br><label>Keep Days</label><input name='keep_days' value='{_safe_html(s.get('keep_days'))}'><br><br><label><input type='checkbox' name='enabled' value='true' {'checked' if s.get('enabled') else ''}> Enabled</label><br><br><button>Save Schedule</button></form></div><p class='muted'>Scheduler setting is saved. Actual automatic cron can be connected on hosting later.</p></body></html>""")
+
+
+@app.post("/enterprise/backup-scheduler/save")
+async def enterprise_backup_scheduler_save(key: str = "", frequency: str = Form("DAILY"), time: str = Form("23:00"), keep_days: str = Form("30"), enabled: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = {"frequency": frequency, "time": time, "keep_days": int(keep_days or 30), "enabled": enabled == 'true', "updated_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(ENTERPRISE_BACKUP_SCHEDULE_FILE, data); _audit("backup_schedule_saved", data)
+    return RedirectResponse(url=f"/enterprise/backup-scheduler?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/enterprise/api-keys", response_class=HTMLResponse)
+async def enterprise_api_keys(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    keys = _json_load(ENTERPRISE_API_KEYS_FILE, {})
+    rows = ''.join(f"<tr><td>{_safe_html(k.get('name'))}</td><td>{_safe_html(k.get('prefix'))}••••••</td><td>{_safe_html(k.get('status'))}</td><td>{_safe_html(k.get('created_at'))}</td></tr>" for k in keys.values()) or "<tr><td colspan='4'>No API keys yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>API Integrations</h1>{_phase7_nav()}<div class='card'><form method='post' action='/enterprise/api-keys/create?key={_safe_html(DASHBOARD_KEY)}'><label>Integration Name</label><input name='name' placeholder='Shopify / RH Studio AI / Website'><br><br><button>Create API Key Record</button></form></div><br><table><tr><th>Name</th><th>Key</th><th>Status</th><th>Created</th></tr>{rows}</table><p class='muted'>Keys are stored as masked records for safe planning. Connect real token verification later when external apps are ready.</p></body></html>""")
+
+
+@app.post("/enterprise/api-keys/create")
+async def enterprise_api_key_create(key: str = "", name: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    keys = _json_load(ENTERPRISE_API_KEYS_FILE, {}); kid = _now_id("API"); raw = _now_id("RHKEY")
+    keys[kid] = {"key_id": kid, "name": name.strip() or "Integration", "prefix": raw[:12], "status": "ACTIVE", "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(ENTERPRISE_API_KEYS_FILE, keys); _audit("api_key_record_created", {"key_id": kid, "name": name})
+    return RedirectResponse(url=f"/enterprise/api-keys?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/enterprise/email", response_class=HTMLResponse)
+async def enterprise_email_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    rules = _json_load(ENTERPRISE_EMAIL_FILE, {})
+    rows = ''.join(f"<tr><td>{_safe_html(r.get('event'))}</td><td>{_safe_html(r.get('to_email'))}</td><td>{_safe_html(r.get('status'))}</td><td>{_safe_html(r.get('created_at'))}</td></tr>" for r in rules.values()) or "<tr><td colspan='4'>No email rules.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>Email Notifications</h1>{_phase7_nav()}<div class='card'><form method='post' action='/enterprise/email/add?key={_safe_html(DASHBOARD_KEY)}'><label>Event</label><select name='event'><option>NEW_LEAD</option><option>QUOTE_SENT</option><option>ORDER_CONFIRMED</option><option>PAYMENT_DUE</option><option>LOW_STOCK</option></select><br><br><label>Email To</label><input name='to_email' placeholder='team@example.com'><br><br><button>Add Rule</button></form></div><br><table><tr><th>Event</th><th>Email To</th><th>Status</th><th>Created</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/enterprise/email/add")
+async def enterprise_email_add(key: str = "", event: str = Form("NEW_LEAD"), to_email: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    rules = _json_load(ENTERPRISE_EMAIL_FILE, {}); rid = _now_id("EML")
+    rules[rid] = {"rule_id": rid, "event": event, "to_email": to_email.strip(), "status": "ACTIVE", "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(ENTERPRISE_EMAIL_FILE, rules); _audit("email_rule_added", rules[rid])
+    return RedirectResponse(url=f"/enterprise/email?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/enterprise/broadcast-scheduler", response_class=HTMLResponse)
+async def enterprise_broadcast_scheduler(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    queue = _json_load(BROADCAST_QUEUE_FILE, {})
+    rows = ''.join(f"<tr><td>{_safe_html(b.get('title'))}</td><td>{_safe_html(b.get('audience'))}</td><td>{_safe_html(b.get('schedule_at'))}</td><td>{_safe_html(b.get('status'))}</td><td>{_safe_html(b.get('message'))}</td></tr>" for b in sorted(queue.values(), key=lambda x: x.get('created_at',''), reverse=True)[:100]) or "<tr><td colspan='5'>No broadcasts.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>WhatsApp Broadcast Scheduler</h1>{_phase7_nav()}<div class='card'><form method='post' action='/enterprise/broadcast-scheduler/add?key={_safe_html(DASHBOARD_KEY)}'><label>Title</label><input name='title'><br><br><label>Audience</label><select name='audience'><option>all</option><option>wholesaler</option><option>retailer</option><option>personal</option><option>hot</option></select><br><br><label>Schedule At</label><input type='datetime-local' name='schedule_at'><br><br><label>Message</label><textarea name='message' rows='5'></textarea><br><br><button>Save Broadcast</button></form></div><br><table><tr><th>Title</th><th>Audience</th><th>Schedule</th><th>Status</th><th>Message</th></tr>{rows}</table><p class='muted'>Safe mode: this only schedules queue records. Actual bulk send should be reviewed before sending to protect WhatsApp quality rating.</p></body></html>""")
+
+
+@app.post("/enterprise/broadcast-scheduler/add")
+async def enterprise_broadcast_add(key: str = "", title: str = Form(""), audience: str = Form("all"), schedule_at: str = Form(""), message: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    queue = _json_load(BROADCAST_QUEUE_FILE, {}); bid = _now_id("BCAST")
+    queue[bid] = {"broadcast_id": bid, "title": title.strip() or "Broadcast", "audience": audience, "schedule_at": schedule_at, "message": message.strip(), "status": "SCHEDULED", "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(BROADCAST_QUEUE_FILE, queue); _audit("broadcast_scheduled", queue[bid])
+    return RedirectResponse(url=f"/enterprise/broadcast-scheduler?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/enterprise/system", response_class=HTMLResponse)
+async def enterprise_system_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    files = [CUSTOMERS_FILE, MESSAGES_FILE, SESSIONS_FILE, DOCUMENTS_FILE, DESIGN_REQUESTS_FILE, APPROVALS_FILE, DISPATCH_FILE, BROADCAST_QUEUE_FILE, AUDIT_FILE, ENTERPRISE_USERS_FILE, ENTERPRISE_ROLES_FILE]
+    rows = ''
+    for path in files:
+        exists = os.path.exists(path); size = os.path.getsize(path) if exists else 0
+        rows += f"<tr><td>{_safe_html(path)}</td><td>{'OK' if exists else 'Missing'}</td><td>{size} bytes</td></tr>"
+    audit_count = len(_json_load(AUDIT_FILE, [])) if isinstance(_json_load(AUDIT_FILE, []), list) else len(_json_load(AUDIT_FILE, {}))
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>System Status & Security</h1>{_phase7_nav()}<div class='cards'><div class='card'><b>App Version</b><h2>7.5.0</h2></div><div class='card'><b>Audit Events</b><h2>{audit_count}</h2></div><div class='card'><b>Mobile UI</b><h2>Improved</h2></div></div><table><tr><th>Data File</th><th>Status</th><th>Size</th></tr>{rows}</table></body></html>""")
+
+
+@app.get("/enterprise/export")
+async def enterprise_export(key: str = ""):
+    if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"7.5.0", "users": _enterprise_users(), "roles": _enterprise_roles(), "api_keys": _json_load(ENTERPRISE_API_KEYS_FILE, {}), "email_notifications": _json_load(ENTERPRISE_EMAIL_FILE, {}), "backup_schedule": _json_load(ENTERPRISE_BACKUP_SCHEDULE_FILE, {}), "broadcast_queue": _json_load(BROADCAST_QUEUE_FILE, {})})
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -2935,6 +3156,6 @@ async def ai_export(key: str = ""):
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "6.5.0",
+        "version": "7.5.0",
         "status":  "running",
     }
