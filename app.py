@@ -189,7 +189,7 @@ MSG_FOLLOWUP_WHOLESALER = (
 app = FastAPI(
     title="RH Business OS — WhatsApp AI Bot v6.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="8.5.0",
+    version="10.3.0",
 )
 
 whatsapp = WhatsAppService(
@@ -2939,6 +2939,9 @@ PHASE9_WEBHOOK_LOG_FILE = os.getenv("PHASE9_WEBHOOK_LOG_FILE", "data/phase9_webh
 PHASE9_PORTAL_SETTINGS_FILE = os.getenv("PHASE9_PORTAL_SETTINGS_FILE", "data/phase9_portal_settings.json")
 PHASE9_LAUNCH_CHECKLIST_FILE = os.getenv("PHASE9_LAUNCH_CHECKLIST_FILE", "data/phase9_launch_checklist.json")
 
+
+# Compatibility alias for Phase 8/9/10 pages
+_phase8_style = _phase7_style
 
 def _phase9_nav():
     k = _safe_html(DASHBOARD_KEY)
