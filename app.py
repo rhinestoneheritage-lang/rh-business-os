@@ -3151,6 +3151,162 @@ async def enterprise_export(key: str = ""):
     return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"8.5.0", "users": _enterprise_users(), "roles": _enterprise_roles(), "api_keys": _json_load(ENTERPRISE_API_KEYS_FILE, {}), "email_notifications": _json_load(ENTERPRISE_EMAIL_FILE, {}), "backup_schedule": _json_load(ENTERPRISE_BACKUP_SCHEDULE_FILE, {}), "broadcast_queue": _json_load(BROADCAST_QUEUE_FILE, {})})
 
 
+
+
+# ── Phase 9 — Integration & Launch Readiness Pack v9.5 ───────────────────────
+PHASE9_INTEGRATIONS_FILE = os.getenv("PHASE9_INTEGRATIONS_FILE", "data/phase9_integrations.json")
+PHASE9_WEBHOOK_LOG_FILE = os.getenv("PHASE9_WEBHOOK_LOG_FILE", "data/phase9_webhook_log.json")
+PHASE9_PORTAL_SETTINGS_FILE = os.getenv("PHASE9_PORTAL_SETTINGS_FILE", "data/phase9_portal_settings.json")
+PHASE9_LAUNCH_CHECKLIST_FILE = os.getenv("PHASE9_LAUNCH_CHECKLIST_FILE", "data/phase9_launch_checklist.json")
+
+
+def _phase9_nav():
+    k = _safe_html(DASHBOARD_KEY)
+    return f"""
+    <div class='nav'>
+      <a class='btn' href='/phase9/dashboard?key={k}'>Phase 9 Home</a>
+      <a class='btn light' href='/phase9/integrations?key={k}'>Integrations</a>
+      <a class='btn light' href='/phase9/webhooks?key={k}'>Webhook Logs</a>
+      <a class='btn light' href='/phase9/portal?key={k}'>Customer Portal</a>
+      <a class='btn light' href='/phase9/performance?key={k}'>Performance</a>
+      <a class='btn light' href='/phase9/launch?key={k}'>Launch Checklist</a>
+      <a class='btn light' href='/dashboard?key={k}'>CRM</a>
+    </div><br>
+    """
+
+
+def _phase9_default_integrations():
+    return {
+        "shopify": {"name": "Shopify Store", "status": "planned", "owner": "Aquib", "notes": "Sync products, orders and customers later."},
+        "rh_studio_ai": {"name": "RH Studio AI", "status": "planned", "owner": "Design Team", "notes": "Connect design processing after Studio AI is stable."},
+        "gmail": {"name": "Gmail / Email", "status": "planned", "owner": "Sales Team", "notes": "Send quotation and invoice copies by email."},
+        "google_drive": {"name": "Google Drive", "status": "planned", "owner": "Office", "notes": "Store quote PDFs, invoices and design files."},
+        "meta_ads": {"name": "Meta Ads Leads", "status": "planned", "owner": "Marketing", "notes": "Import Instagram/Facebook lead forms."},
+    }
+
+
+@app.get("/phase9/dashboard", response_class=HTMLResponse)
+async def phase9_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    integrations = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    logs = _json_load(PHASE9_WEBHOOK_LOG_FILE, [])
+    portal = _json_load(PHASE9_PORTAL_SETTINGS_FILE, {"enabled": "no", "portal_name": "RH Customer Portal", "public_upload": "no"})
+    active = sum(1 for v in integrations.values() if v.get("status") == "active")
+    planned = sum(1 for v in integrations.values() if v.get("status") == "planned")
+    rows = ''.join(f"<tr><td>{_safe_html(v.get('name'))}</td><td><span class='badge'>{_safe_html(v.get('status'))}</span></td><td>{_safe_html(v.get('owner'))}</td></tr>" for v in integrations.values())
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Phase 9 — Integration & Launch Readiness</h1>{_phase9_nav()}<div class='cards'><div class='card'><div class='muted'>Integrations</div><div class='kpi'>{len(integrations)}</div></div><div class='card'><div class='muted'>Active</div><div class='kpi good'>{active}</div></div><div class='card'><div class='muted'>Planned</div><div class='kpi warn'>{planned}</div></div><div class='card'><div class='muted'>Webhook Test Logs</div><div class='kpi'>{len(logs)}</div></div></div><div class='grid'><div class='card'><h2>Integration Map</h2><table><tr><th>Name</th><th>Status</th><th>Owner</th></tr>{rows}</table></div><div class='card'><h2>Portal Status</h2><p><b>Name:</b> {_safe_html(portal.get('portal_name'))}</p><p><b>Enabled:</b> {_safe_html(portal.get('enabled'))}</p><p><b>Public Upload:</b> {_safe_html(portal.get('public_upload'))}</p><p class='muted'>Phase 9 prepares all external connections safely. Real API secrets should stay in .env only.</p></div></div></body></html>""")
+
+
+@app.get("/phase9/integrations", response_class=HTMLResponse)
+async def phase9_integrations(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    rows = ''.join(f"""<tr><td><b>{_safe_html(v.get('name'))}</b><br><span class='muted'>{_safe_html(k)}</span></td><td>{_safe_html(v.get('status'))}</td><td>{_safe_html(v.get('owner'))}</td><td>{_safe_html(v.get('notes'))}</td><td><form method='post' action='/phase9/integrations/update?key={_safe_html(DASHBOARD_KEY)}'><input type='hidden' name='integration_id' value='{_safe_html(k)}'><select name='status'><option value='planned'>planned</option><option value='active'>active</option><option value='paused'>paused</option><option value='blocked'>blocked</option></select><input name='owner' value='{_safe_html(v.get('owner'))}'><input name='notes' value='{_safe_html(v.get('notes'))}'><button>Save</button></form></td></tr>""" for k,v in data.items())
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Integration Center</h1>{_phase9_nav()}<table><tr><th>Integration</th><th>Status</th><th>Owner</th><th>Notes</th><th>Update</th></tr>{rows}</table><br><div class='card'><h2>Add Custom Integration</h2><form method='post' action='/phase9/integrations/add?key={_safe_html(DASHBOARD_KEY)}'><input name='integration_id' placeholder='unique_id'><br><br><input name='name' placeholder='Integration name'><br><br><input name='owner' placeholder='Owner'><br><br><textarea name='notes' placeholder='Notes'></textarea><br><br><button>Add Integration</button></form></div></body></html>""")
+
+
+@app.post("/phase9/integrations/add")
+async def phase9_integrations_add(key: str = "", integration_id: str = Form(""), name: str = Form(""), owner: str = Form(""), notes: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    iid = (integration_id or name or "custom").strip().lower().replace(" ", "_")
+    data[iid] = {"name": name or iid, "status": "planned", "owner": owner, "notes": notes, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(PHASE9_INTEGRATIONS_FILE, data); _audit("phase9_integration_added", {"integration_id": iid})
+    return RedirectResponse(url=f"/phase9/integrations?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/phase9/integrations/update")
+async def phase9_integrations_update(key: str = "", integration_id: str = Form(""), status: str = Form("planned"), owner: str = Form(""), notes: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    if integration_id in data:
+        data[integration_id].update({"status": status, "owner": owner, "notes": notes, "updated_at": datetime.utcnow().isoformat()+"Z"})
+    _json_save(PHASE9_INTEGRATIONS_FILE, data); _audit("phase9_integration_updated", {"integration_id": integration_id, "status": status})
+    return RedirectResponse(url=f"/phase9/integrations?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/webhooks", response_class=HTMLResponse)
+async def phase9_webhooks(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    logs = _json_load(PHASE9_WEBHOOK_LOG_FILE, [])
+    rows = ''.join(f"<tr><td>{_safe_html(x.get('time'))}</td><td>{_safe_html(x.get('source'))}</td><td>{_safe_html(x.get('status'))}</td><td>{_safe_html(x.get('payload'))}</td></tr>" for x in logs[-100:][::-1]) or "<tr><td colspan='4'>No test logs yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Webhook Test Logs</h1>{_phase9_nav()}<div class='card'><form method='post' action='/phase9/webhooks/test?key={_safe_html(DASHBOARD_KEY)}'><input name='source' placeholder='shopify / rh_studio_ai / meta_ads'><br><br><textarea name='payload' placeholder='Paste sample webhook payload or note'></textarea><br><br><button>Save Test Log</button></form></div><br><table><tr><th>Time</th><th>Source</th><th>Status</th><th>Payload</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/phase9/webhooks/test")
+async def phase9_webhooks_test(key: str = "", source: str = Form("manual"), payload: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    logs = _json_load(PHASE9_WEBHOOK_LOG_FILE, [])
+    logs.append({"time": datetime.utcnow().isoformat()+"Z", "source": source, "status": "received", "payload": payload[:1000]})
+    _json_save(PHASE9_WEBHOOK_LOG_FILE, logs[-500:]); _audit("phase9_webhook_test_logged", {"source": source})
+    return RedirectResponse(url=f"/phase9/webhooks?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/portal", response_class=HTMLResponse)
+async def phase9_portal(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    s = _json_load(PHASE9_PORTAL_SETTINGS_FILE, {"enabled":"no", "portal_name":"RH Customer Portal", "public_upload":"no", "approval_required":"yes", "notes":"Customer portal will be separate after RH Business OS."})
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Customer Portal Bridge</h1>{_phase9_nav()}<div class='grid'><div class='card'><h2>Portal Settings</h2><form method='post' action='/phase9/portal/save?key={_safe_html(DASHBOARD_KEY)}'><label>Portal Name</label><input name='portal_name' value='{_safe_html(s.get('portal_name'))}'><br><br><label>Enabled</label><select name='enabled'><option>{_safe_html(s.get('enabled'))}</option><option>yes</option><option>no</option></select><br><br><label>Public Upload</label><select name='public_upload'><option>{_safe_html(s.get('public_upload'))}</option><option>yes</option><option>no</option></select><br><br><label>Approval Required</label><select name='approval_required'><option>{_safe_html(s.get('approval_required'))}</option><option>yes</option><option>no</option></select><br><br><label>Notes</label><textarea name='notes'>{_safe_html(s.get('notes'))}</textarea><br><br><button>Save Portal Settings</button></form></div><div class='card'><h2>Future Flow</h2><p>Customer uploads design → CRM creates design request → RH Studio AI processes file → customer approves quote/order.</p><p class='muted'>This is a safe planning bridge. Public portal should be built separately after CRM is stable.</p></div></div></body></html>""")
+
+
+@app.post("/phase9/portal/save")
+async def phase9_portal_save(key: str = "", portal_name: str = Form("RH Customer Portal"), enabled: str = Form("no"), public_upload: str = Form("no"), approval_required: str = Form("yes"), notes: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    _json_save(PHASE9_PORTAL_SETTINGS_FILE, {"portal_name": portal_name, "enabled": enabled, "public_upload": public_upload, "approval_required": approval_required, "notes": notes, "updated_at": datetime.utcnow().isoformat()+"Z"})
+    _audit("phase9_portal_settings_saved", {"enabled": enabled})
+    return RedirectResponse(url=f"/phase9/portal?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/performance", response_class=HTMLResponse)
+async def phase9_performance(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    files = [CUSTOMERS_FILE, MESSAGES_FILE, SESSIONS_FILE, PHASE9_INTEGRATIONS_FILE, PHASE9_WEBHOOK_LOG_FILE, AUDIT_FILE]
+    rows = ''
+    total_size = 0
+    for f in files:
+        exists = os.path.exists(f)
+        size = os.path.getsize(f) if exists else 0
+        total_size += size
+        rows += f"<tr><td>{_safe_html(f)}</td><td>{'yes' if exists else 'no'}</td><td>{round(size/1024,2)} KB</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Performance & Data Size</h1>{_phase9_nav()}<div class='cards'><div class='card'><div class='muted'>Tracked Files</div><div class='kpi'>{len(files)}</div></div><div class='card'><div class='muted'>Total Data Size</div><div class='kpi'>{round(total_size/1024,2)} KB</div></div></div><table><tr><th>File</th><th>Exists</th><th>Size</th></tr>{rows}</table><p class='muted'>For large production use, next major upgrade should move flat JSON to SQLite/PostgreSQL.</p></body></html>""")
+
+
+@app.get("/phase9/launch", response_class=HTMLResponse)
+async def phase9_launch(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    default = {
+        "domain_ssl": {"label":"Domain and SSL ready", "done": False},
+        "env_locked": {"label":"Production .env locked", "done": False},
+        "backup_downloaded": {"label":"Latest backup downloaded", "done": False},
+        "team_access": {"label":"Team access rules reviewed", "done": False},
+        "whatsapp_templates": {"label":"WhatsApp templates approved", "done": False},
+        "test_order": {"label":"One test lead → quote → order completed", "done": False},
+        "mobile_check": {"label":"Mobile dashboard checked", "done": False},
+        "training_done": {"label":"Staff training done", "done": False},
+    }
+    data = _json_load(PHASE9_LAUNCH_CHECKLIST_FILE, default)
+    rows = ''.join(f"<tr><td>{_safe_html(v.get('label'))}</td><td>{'✅ Done' if v.get('done') else '⬜ Pending'}</td><td><form method='post' action='/phase9/launch/toggle?key={_safe_html(DASHBOARD_KEY)}'><input type='hidden' name='item_id' value='{_safe_html(k)}'><button>Toggle</button></form></td></tr>" for k,v in data.items())
+    done = sum(1 for v in data.values() if v.get('done'))
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Phase 9 Launch Checklist</h1>{_phase9_nav()}<div class='card'><div class='muted'>Launch Progress</div><div class='kpi'>{done}/{len(data)}</div></div><br><table><tr><th>Item</th><th>Status</th><th>Action</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/phase9/launch/toggle")
+async def phase9_launch_toggle(key: str = "", item_id: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    default = _json_load(PHASE9_LAUNCH_CHECKLIST_FILE, {})
+    if item_id in default:
+        default[item_id]["done"] = not default[item_id].get("done", False)
+        default[item_id]["updated_at"] = datetime.utcnow().isoformat()+"Z"
+    _json_save(PHASE9_LAUNCH_CHECKLIST_FILE, default); _audit("phase9_launch_toggle", {"item_id": item_id})
+    return RedirectResponse(url=f"/phase9/launch?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/export")
+async def phase9_export(key: str = ""):
+    if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"9.5.0", "integrations": _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations()), "portal": _json_load(PHASE9_PORTAL_SETTINGS_FILE, {}), "launch": _json_load(PHASE9_LAUNCH_CHECKLIST_FILE, {}), "note":"Phase 9 prepares integrations and launch readiness without exposing API secrets."})
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
@@ -3330,7 +3486,7 @@ async def final_docs(key: str = ""):
         ("Final", "Use this Phase 8 section for analytics, security checks, deployment and export."),
     ]
     rows = ''.join(f"<tr><td><b>{_safe_html(a)}</b></td><td>{_safe_html(b)}</td></tr>" for a,b in docs)
-    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Documentation</h1>{_phase8_nav()}<table><tr><th>Module</th><th>How to Use</th></tr>{rows}</table><br><div class='card'><h2>Version Notes</h2><p>Current build: v8.5. Phase 8 adds final polish, analytics, security hardening, error log, deployment checklist and documentation.</p></div></body></html>""")
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Documentation</h1>{_phase8_nav()}<table><tr><th>Module</th><th>How to Use</th></tr>{rows}</table><br><div class='card'><h2>Version Notes</h2><p>Current build: v9.5. Phase 9 adds integration center, webhook logs, customer portal bridge, performance checks and launch readiness.</p></div></body></html>""")
 
 
 @app.get("/final/export")
@@ -3339,12 +3495,168 @@ async def final_export(key: str = ""):
     return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"8.5.0", "metrics": _phase8_metrics(), "ui_settings": _json_load(FINAL_UI_SETTINGS_FILE, {}), "deployment": _json_load(DEPLOYMENT_CHECKLIST_FILE, {}), "security_note":"Change default keys before production."})
 
 
+
+
+# ── Phase 9 — Integration & Launch Readiness Pack v9.5 ───────────────────────
+PHASE9_INTEGRATIONS_FILE = os.getenv("PHASE9_INTEGRATIONS_FILE", "data/phase9_integrations.json")
+PHASE9_WEBHOOK_LOG_FILE = os.getenv("PHASE9_WEBHOOK_LOG_FILE", "data/phase9_webhook_log.json")
+PHASE9_PORTAL_SETTINGS_FILE = os.getenv("PHASE9_PORTAL_SETTINGS_FILE", "data/phase9_portal_settings.json")
+PHASE9_LAUNCH_CHECKLIST_FILE = os.getenv("PHASE9_LAUNCH_CHECKLIST_FILE", "data/phase9_launch_checklist.json")
+
+
+def _phase9_nav():
+    k = _safe_html(DASHBOARD_KEY)
+    return f"""
+    <div class='nav'>
+      <a class='btn' href='/phase9/dashboard?key={k}'>Phase 9 Home</a>
+      <a class='btn light' href='/phase9/integrations?key={k}'>Integrations</a>
+      <a class='btn light' href='/phase9/webhooks?key={k}'>Webhook Logs</a>
+      <a class='btn light' href='/phase9/portal?key={k}'>Customer Portal</a>
+      <a class='btn light' href='/phase9/performance?key={k}'>Performance</a>
+      <a class='btn light' href='/phase9/launch?key={k}'>Launch Checklist</a>
+      <a class='btn light' href='/dashboard?key={k}'>CRM</a>
+    </div><br>
+    """
+
+
+def _phase9_default_integrations():
+    return {
+        "shopify": {"name": "Shopify Store", "status": "planned", "owner": "Aquib", "notes": "Sync products, orders and customers later."},
+        "rh_studio_ai": {"name": "RH Studio AI", "status": "planned", "owner": "Design Team", "notes": "Connect design processing after Studio AI is stable."},
+        "gmail": {"name": "Gmail / Email", "status": "planned", "owner": "Sales Team", "notes": "Send quotation and invoice copies by email."},
+        "google_drive": {"name": "Google Drive", "status": "planned", "owner": "Office", "notes": "Store quote PDFs, invoices and design files."},
+        "meta_ads": {"name": "Meta Ads Leads", "status": "planned", "owner": "Marketing", "notes": "Import Instagram/Facebook lead forms."},
+    }
+
+
+@app.get("/phase9/dashboard", response_class=HTMLResponse)
+async def phase9_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    integrations = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    logs = _json_load(PHASE9_WEBHOOK_LOG_FILE, [])
+    portal = _json_load(PHASE9_PORTAL_SETTINGS_FILE, {"enabled": "no", "portal_name": "RH Customer Portal", "public_upload": "no"})
+    active = sum(1 for v in integrations.values() if v.get("status") == "active")
+    planned = sum(1 for v in integrations.values() if v.get("status") == "planned")
+    rows = ''.join(f"<tr><td>{_safe_html(v.get('name'))}</td><td><span class='badge'>{_safe_html(v.get('status'))}</span></td><td>{_safe_html(v.get('owner'))}</td></tr>" for v in integrations.values())
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Phase 9 — Integration & Launch Readiness</h1>{_phase9_nav()}<div class='cards'><div class='card'><div class='muted'>Integrations</div><div class='kpi'>{len(integrations)}</div></div><div class='card'><div class='muted'>Active</div><div class='kpi good'>{active}</div></div><div class='card'><div class='muted'>Planned</div><div class='kpi warn'>{planned}</div></div><div class='card'><div class='muted'>Webhook Test Logs</div><div class='kpi'>{len(logs)}</div></div></div><div class='grid'><div class='card'><h2>Integration Map</h2><table><tr><th>Name</th><th>Status</th><th>Owner</th></tr>{rows}</table></div><div class='card'><h2>Portal Status</h2><p><b>Name:</b> {_safe_html(portal.get('portal_name'))}</p><p><b>Enabled:</b> {_safe_html(portal.get('enabled'))}</p><p><b>Public Upload:</b> {_safe_html(portal.get('public_upload'))}</p><p class='muted'>Phase 9 prepares all external connections safely. Real API secrets should stay in .env only.</p></div></div></body></html>""")
+
+
+@app.get("/phase9/integrations", response_class=HTMLResponse)
+async def phase9_integrations(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    rows = ''.join(f"""<tr><td><b>{_safe_html(v.get('name'))}</b><br><span class='muted'>{_safe_html(k)}</span></td><td>{_safe_html(v.get('status'))}</td><td>{_safe_html(v.get('owner'))}</td><td>{_safe_html(v.get('notes'))}</td><td><form method='post' action='/phase9/integrations/update?key={_safe_html(DASHBOARD_KEY)}'><input type='hidden' name='integration_id' value='{_safe_html(k)}'><select name='status'><option value='planned'>planned</option><option value='active'>active</option><option value='paused'>paused</option><option value='blocked'>blocked</option></select><input name='owner' value='{_safe_html(v.get('owner'))}'><input name='notes' value='{_safe_html(v.get('notes'))}'><button>Save</button></form></td></tr>""" for k,v in data.items())
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Integration Center</h1>{_phase9_nav()}<table><tr><th>Integration</th><th>Status</th><th>Owner</th><th>Notes</th><th>Update</th></tr>{rows}</table><br><div class='card'><h2>Add Custom Integration</h2><form method='post' action='/phase9/integrations/add?key={_safe_html(DASHBOARD_KEY)}'><input name='integration_id' placeholder='unique_id'><br><br><input name='name' placeholder='Integration name'><br><br><input name='owner' placeholder='Owner'><br><br><textarea name='notes' placeholder='Notes'></textarea><br><br><button>Add Integration</button></form></div></body></html>""")
+
+
+@app.post("/phase9/integrations/add")
+async def phase9_integrations_add(key: str = "", integration_id: str = Form(""), name: str = Form(""), owner: str = Form(""), notes: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    iid = (integration_id or name or "custom").strip().lower().replace(" ", "_")
+    data[iid] = {"name": name or iid, "status": "planned", "owner": owner, "notes": notes, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(PHASE9_INTEGRATIONS_FILE, data); _audit("phase9_integration_added", {"integration_id": iid})
+    return RedirectResponse(url=f"/phase9/integrations?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/phase9/integrations/update")
+async def phase9_integrations_update(key: str = "", integration_id: str = Form(""), status: str = Form("planned"), owner: str = Form(""), notes: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations())
+    if integration_id in data:
+        data[integration_id].update({"status": status, "owner": owner, "notes": notes, "updated_at": datetime.utcnow().isoformat()+"Z"})
+    _json_save(PHASE9_INTEGRATIONS_FILE, data); _audit("phase9_integration_updated", {"integration_id": integration_id, "status": status})
+    return RedirectResponse(url=f"/phase9/integrations?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/webhooks", response_class=HTMLResponse)
+async def phase9_webhooks(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    logs = _json_load(PHASE9_WEBHOOK_LOG_FILE, [])
+    rows = ''.join(f"<tr><td>{_safe_html(x.get('time'))}</td><td>{_safe_html(x.get('source'))}</td><td>{_safe_html(x.get('status'))}</td><td>{_safe_html(x.get('payload'))}</td></tr>" for x in logs[-100:][::-1]) or "<tr><td colspan='4'>No test logs yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Webhook Test Logs</h1>{_phase9_nav()}<div class='card'><form method='post' action='/phase9/webhooks/test?key={_safe_html(DASHBOARD_KEY)}'><input name='source' placeholder='shopify / rh_studio_ai / meta_ads'><br><br><textarea name='payload' placeholder='Paste sample webhook payload or note'></textarea><br><br><button>Save Test Log</button></form></div><br><table><tr><th>Time</th><th>Source</th><th>Status</th><th>Payload</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/phase9/webhooks/test")
+async def phase9_webhooks_test(key: str = "", source: str = Form("manual"), payload: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    logs = _json_load(PHASE9_WEBHOOK_LOG_FILE, [])
+    logs.append({"time": datetime.utcnow().isoformat()+"Z", "source": source, "status": "received", "payload": payload[:1000]})
+    _json_save(PHASE9_WEBHOOK_LOG_FILE, logs[-500:]); _audit("phase9_webhook_test_logged", {"source": source})
+    return RedirectResponse(url=f"/phase9/webhooks?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/portal", response_class=HTMLResponse)
+async def phase9_portal(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    s = _json_load(PHASE9_PORTAL_SETTINGS_FILE, {"enabled":"no", "portal_name":"RH Customer Portal", "public_upload":"no", "approval_required":"yes", "notes":"Customer portal will be separate after RH Business OS."})
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Customer Portal Bridge</h1>{_phase9_nav()}<div class='grid'><div class='card'><h2>Portal Settings</h2><form method='post' action='/phase9/portal/save?key={_safe_html(DASHBOARD_KEY)}'><label>Portal Name</label><input name='portal_name' value='{_safe_html(s.get('portal_name'))}'><br><br><label>Enabled</label><select name='enabled'><option>{_safe_html(s.get('enabled'))}</option><option>yes</option><option>no</option></select><br><br><label>Public Upload</label><select name='public_upload'><option>{_safe_html(s.get('public_upload'))}</option><option>yes</option><option>no</option></select><br><br><label>Approval Required</label><select name='approval_required'><option>{_safe_html(s.get('approval_required'))}</option><option>yes</option><option>no</option></select><br><br><label>Notes</label><textarea name='notes'>{_safe_html(s.get('notes'))}</textarea><br><br><button>Save Portal Settings</button></form></div><div class='card'><h2>Future Flow</h2><p>Customer uploads design → CRM creates design request → RH Studio AI processes file → customer approves quote/order.</p><p class='muted'>This is a safe planning bridge. Public portal should be built separately after CRM is stable.</p></div></div></body></html>""")
+
+
+@app.post("/phase9/portal/save")
+async def phase9_portal_save(key: str = "", portal_name: str = Form("RH Customer Portal"), enabled: str = Form("no"), public_upload: str = Form("no"), approval_required: str = Form("yes"), notes: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    _json_save(PHASE9_PORTAL_SETTINGS_FILE, {"portal_name": portal_name, "enabled": enabled, "public_upload": public_upload, "approval_required": approval_required, "notes": notes, "updated_at": datetime.utcnow().isoformat()+"Z"})
+    _audit("phase9_portal_settings_saved", {"enabled": enabled})
+    return RedirectResponse(url=f"/phase9/portal?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/performance", response_class=HTMLResponse)
+async def phase9_performance(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    files = [CUSTOMERS_FILE, MESSAGES_FILE, SESSIONS_FILE, PHASE9_INTEGRATIONS_FILE, PHASE9_WEBHOOK_LOG_FILE, AUDIT_FILE]
+    rows = ''
+    total_size = 0
+    for f in files:
+        exists = os.path.exists(f)
+        size = os.path.getsize(f) if exists else 0
+        total_size += size
+        rows += f"<tr><td>{_safe_html(f)}</td><td>{'yes' if exists else 'no'}</td><td>{round(size/1024,2)} KB</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Performance & Data Size</h1>{_phase9_nav()}<div class='cards'><div class='card'><div class='muted'>Tracked Files</div><div class='kpi'>{len(files)}</div></div><div class='card'><div class='muted'>Total Data Size</div><div class='kpi'>{round(total_size/1024,2)} KB</div></div></div><table><tr><th>File</th><th>Exists</th><th>Size</th></tr>{rows}</table><p class='muted'>For large production use, next major upgrade should move flat JSON to SQLite/PostgreSQL.</p></body></html>""")
+
+
+@app.get("/phase9/launch", response_class=HTMLResponse)
+async def phase9_launch(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    default = {
+        "domain_ssl": {"label":"Domain and SSL ready", "done": False},
+        "env_locked": {"label":"Production .env locked", "done": False},
+        "backup_downloaded": {"label":"Latest backup downloaded", "done": False},
+        "team_access": {"label":"Team access rules reviewed", "done": False},
+        "whatsapp_templates": {"label":"WhatsApp templates approved", "done": False},
+        "test_order": {"label":"One test lead → quote → order completed", "done": False},
+        "mobile_check": {"label":"Mobile dashboard checked", "done": False},
+        "training_done": {"label":"Staff training done", "done": False},
+    }
+    data = _json_load(PHASE9_LAUNCH_CHECKLIST_FILE, default)
+    rows = ''.join(f"<tr><td>{_safe_html(v.get('label'))}</td><td>{'✅ Done' if v.get('done') else '⬜ Pending'}</td><td><form method='post' action='/phase9/launch/toggle?key={_safe_html(DASHBOARD_KEY)}'><input type='hidden' name='item_id' value='{_safe_html(k)}'><button>Toggle</button></form></td></tr>" for k,v in data.items())
+    done = sum(1 for v in data.values() if v.get('done'))
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Phase 9 Launch Checklist</h1>{_phase9_nav()}<div class='card'><div class='muted'>Launch Progress</div><div class='kpi'>{done}/{len(data)}</div></div><br><table><tr><th>Item</th><th>Status</th><th>Action</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/phase9/launch/toggle")
+async def phase9_launch_toggle(key: str = "", item_id: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    default = _json_load(PHASE9_LAUNCH_CHECKLIST_FILE, {})
+    if item_id in default:
+        default[item_id]["done"] = not default[item_id].get("done", False)
+        default[item_id]["updated_at"] = datetime.utcnow().isoformat()+"Z"
+    _json_save(PHASE9_LAUNCH_CHECKLIST_FILE, default); _audit("phase9_launch_toggle", {"item_id": item_id})
+    return RedirectResponse(url=f"/phase9/launch?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/phase9/export")
+async def phase9_export(key: str = ""):
+    if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"9.5.0", "integrations": _json_load(PHASE9_INTEGRATIONS_FILE, _phase9_default_integrations()), "portal": _json_load(PHASE9_PORTAL_SETTINGS_FILE, {}), "launch": _json_load(PHASE9_LAUNCH_CHECKLIST_FILE, {}), "note":"Phase 9 prepares integrations and launch readiness without exposing API secrets."})
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "8.5.0",
+        "version": "9.5.0",
         "status":  "running",
-        "phase": "Phase 8 Final Polish",
+        "phase": "Phase 9 Integration & Launch Readiness",
     }
