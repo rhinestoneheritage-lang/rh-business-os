@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v1.2
+RH Business OS — WhatsApp AI Bot v1.5
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -47,6 +47,15 @@ SESSIONS_FILE   = os.getenv("SESSIONS_FILE", "data/sessions.json")
 CUSTOMERS_FILE  = os.getenv("CUSTOMERS_FILE", "data/customers.json")
 DASHBOARD_KEY  = os.getenv("DASHBOARD_KEY", "RH2026")
 ASSIGNEES = [name.strip() for name in os.getenv("CRM_ASSIGNEES", "Shifa,Hasan,Awais,Aquib").split(",") if name.strip()]
+PIPELINE_STAGES = ["NEW", "CONTACTED", "QUALIFIED", "QUOTE_PENDING", "QUOTE_SENT", "SAMPLE", "ORDER_CONFIRMED", "DISPATCHED", "CLOSED", "LOST"]
+TASK_STATUSES = ["OPEN", "IN_PROGRESS", "DONE"]
+QUICK_REPLY_TEMPLATES = {
+    "catalogue": "Hello 👋\n\nThank you for contacting Rhinestone Heritage. You can browse our latest rhinestone transfer sticker collection here:\nhttps://www.rhinestoneheritage.com/collections/rhinestone-transfer-stickers\n\nPlease share the design screenshot and quantity you need.",
+    "moq": "Thank you. Please share your approximate quantity (MOQ) for each design. Example: 100 pcs / 500 pcs / 1000 pcs.",
+    "quote": "Thank you for sharing the details. Our team will check the design, size and quantity, then share the best quotation shortly.",
+    "sample": "We can arrange a sample/design preview before bulk order confirmation. Please share size, colour and quantity details.",
+    "payment": "Your order can be processed after payment confirmation. Please share the payment screenshot once done.",
+}
 
 # ── States ────────────────────────────────────────────────────────────────────
 STATE_NEW                    = "NEW"
@@ -114,9 +123,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v1.2",
+    title="RH Business OS — WhatsApp AI Bot v1.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="1.2.0",
+    version="1.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -541,7 +550,7 @@ def _format_followup(value: str | None) -> str:
         return ""
     return dt.strftime("%d %b %Y, %I:%M %p")
 
-# ── CRM Dashboard v1.2 ────────────────────────────────────────────────────────
+# ── CRM Dashboard v1.5 ────────────────────────────────────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     if key != DASHBOARD_KEY:
@@ -575,6 +584,11 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     followups_sent = sum(1 for c in rows if c.get("last_followup_sent_at"))
     assigned_leads = sum(1 for c in rows if c.get("assigned_to"))
     unassigned_leads = sum(1 for c in rows if not c.get("assigned_to"))
+    open_tasks = sum(1 for c in rows if c.get("task_text") and c.get("task_status") != "DONE")
+    done_tasks = sum(1 for c in rows if c.get("task_status") == "DONE")
+    quote_pending = sum(1 for c in rows if c.get("pipeline_stage") == "QUOTE_PENDING")
+    quote_sent = sum(1 for c in rows if c.get("pipeline_stage") == "QUOTE_SENT")
+    order_confirmed = sum(1 for c in rows if c.get("pipeline_stage") == "ORDER_CONFIRMED")
 
     query = (q or "").strip().lower()
 
@@ -602,6 +616,19 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
         rows = [c for c in rows if c.get("assigned_to")]
     elif filter == "unassigned":
         rows = [c for c in rows if not c.get("assigned_to")]
+    elif filter == "task_open":
+        rows = [c for c in rows if c.get("task_text") and c.get("task_status") != "DONE"]
+    elif filter == "task_done":
+        rows = [c for c in rows if c.get("task_status") == "DONE"]
+    elif filter == "quote_pending":
+        rows = [c for c in rows if c.get("pipeline_stage") == "QUOTE_PENDING"]
+    elif filter == "quote_sent":
+        rows = [c for c in rows if c.get("pipeline_stage") == "QUOTE_SENT"]
+    elif filter == "order_confirmed":
+        rows = [c for c in rows if c.get("pipeline_stage") == "ORDER_CONFIRMED"]
+    elif filter.startswith("pipeline_"):
+        stage_name = filter.replace("pipeline_", "", 1).upper()
+        rows = [c for c in rows if str(c.get("pipeline_stage", "NEW")).upper() == stage_name]
     elif filter.startswith("assigned_"):
         assigned_name = filter.replace("assigned_", "", 1).lower()
         rows = [c for c in rows if str(c.get("assigned_to", "")).lower() == assigned_name]
@@ -616,6 +643,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             or query in str(c.get("notes", "")).lower()
             or query in str(c.get("followup_note", "")).lower()
             or query in str(c.get("assigned_to", "")).lower()
+            or query in str(c.get("task_text", "")).lower()
+            or query in str(c.get("pipeline_stage", "")).lower()
         ]
 
     def esc(value):
@@ -657,6 +686,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             <td><span class="pill buyer">{esc(c.get("buyer_type") or "unknown")}</span></td>
             <td><span class="pill {status_class(status)}">{esc(status)}</span></td>
             <td><span class="pill assigned">{esc(c.get("assigned_to") or "Unassigned")}</span></td>
+            <td><span class="pill pipeline">{esc(c.get("pipeline_stage") or "NEW")}</span></td>
+            <td><span class="pill task">{esc((c.get("task_status") or "") if c.get("task_text") else "No Task")}</span></td>
             <td class="lastmsg">{esc(c.get("last_message"))}</td>
             <td>{esc(c.get("message_count"))}</td>
             <td>{esc(short_date(c.get("first_seen")))}</td>
@@ -677,6 +708,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                     <th>Buyer Type</th>
                     <th>Status</th>
                     <th>Assigned To</th>
+                    <th>Pipeline</th>
+                    <th>Task</th>
                     <th>Last Message</th>
                     <th>Messages</th>
                     <th>First Seen</th>
@@ -800,6 +833,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             }}
             .buyer {{ background: #e8f0ff; }}
             .assigned {{ background:#f3e8ff; color:#6b21a8; }}
+            .pipeline {{ background:#e0f2fe; color:#075985; }}
+            .task {{ background:#fef3c7; color:#92400e; }}
             .qualified {{ background: #dcfce7; color: #166534; }}
             .website {{ background: #fff7ed; color: #9a3412; }}
             .waiting {{ background: #fef9c3; color: #854d0e; }}
@@ -850,6 +885,11 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             <div class="card"><div class="card-title">Follow-ups Sent</div><div class="card-value">{followups_sent}</div></div>
             <div class="card"><div class="card-title">Assigned Leads</div><div class="card-value">{assigned_leads}</div></div>
             <div class="card"><div class="card-title">Unassigned Leads</div><div class="card-value">{unassigned_leads}</div></div>
+            <div class="card"><div class="card-title">Open Tasks</div><div class="card-value">{open_tasks}</div></div>
+            <div class="card"><div class="card-title">Done Tasks</div><div class="card-value">{done_tasks}</div></div>
+            <div class="card"><div class="card-title">Quote Pending</div><div class="card-value">{quote_pending}</div></div>
+            <div class="card"><div class="card-title">Quote Sent</div><div class="card-value">{quote_sent}</div></div>
+            <div class="card"><div class="card-title">Orders Confirmed</div><div class="card-value">{order_confirmed}</div></div>
         </div>
 
         <div class="toolbar">
@@ -874,6 +914,11 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                 {filter_link("Follow-up Sent", "followup_sent")}
                 {filter_link("Assigned", "assigned")}
                 {filter_link("Unassigned", "unassigned")}
+                {filter_link("Open Tasks", "task_open")}
+                {filter_link("Done Tasks", "task_done")}
+                {filter_link("Quote Pending", "quote_pending")}
+                {filter_link("Quote Sent", "quote_sent")}
+                {filter_link("Order Confirmed", "order_confirmed")}
                 {"".join(filter_link(name, "assigned_" + name.lower()) for name in ASSIGNEES)}
             </div>
         </div>
@@ -901,6 +946,11 @@ async def export_dashboard(key: str = ""):
         "Lead Status",
         "Assigned To",
         "Assigned At",
+        "Pipeline Stage",
+        "Pipeline Updated At",
+        "Task Text",
+        "Task Status",
+        "Task Due At",
         "Last Message",
         "Message Count",
         "First Seen",
@@ -919,6 +969,11 @@ async def export_dashboard(key: str = ""):
             c.get("lead_status", ""),
             c.get("assigned_to", ""),
             c.get("assigned_at", ""),
+            c.get("pipeline_stage", ""),
+            c.get("pipeline_updated_at", ""),
+            c.get("task_text", ""),
+            c.get("task_status", ""),
+            c.get("task_due_at", ""),
             c.get("last_message", ""),
             c.get("message_count", ""),
             c.get("first_seen", ""),
@@ -989,6 +1044,8 @@ async def customer_profile(phone: str, key: str = ""):
             .value {{ font-weight:700; margin-top:4px; word-break:break-word; }}
             .pill {{ display:inline-block; padding:6px 10px; border-radius:999px; background:#e8f0ff; font-size:13px; font-weight:700; }}
             .assigned {{ background:#f3e8ff; color:#6b21a8; }}
+            .pipeline {{ background:#e0f2fe; color:#075985; }}
+            .task {{ background:#fef3c7; color:#92400e; }}
             textarea {{ width:100%; min-height:140px; padding:12px; border:1px solid #ddd; border-radius:10px; font-size:14px; box-sizing:border-box; }}
             .msg {{ background:#fff; border:1px solid #eee; border-radius:12px; padding:12px; margin-bottom:10px; }}
             .msg.outbound {{ background:#f0fdf4; border-color:#bbf7d0; }}
@@ -1017,6 +1074,10 @@ async def customer_profile(phone: str, key: str = ""):
                 <div class="label">Buyer Type</div><div class="value"><span class="pill">{esc(customer.get("buyer_type") or "unknown")}</span></div>
                 <div class="label">Lead Status</div><div class="value">{esc(customer.get("lead_status"))}</div>
                 <div class="label">Assigned To</div><div class="value"><span class="pill assigned">{esc(customer.get("assigned_to") or "Unassigned")}</span></div>
+                <div class="label">Pipeline Stage</div><div class="value"><span class="pill">{esc(customer.get("pipeline_stage") or "NEW")}</span></div>
+                <div class="label">Task</div><div class="value">{esc(customer.get("task_text") or "No task")}</div>
+                <div class="label">Task Status</div><div class="value">{esc(customer.get("task_status") or "")}</div>
+                <div class="label">Task Due</div><div class="value">{esc(customer.get("task_due_at") or "")}</div>
                 <div class="label">Last Message</div><div class="value">{esc(customer.get("last_message"))}</div>
                 <div class="label">Message Count</div><div class="value">{esc(customer.get("message_count"))}</div>
                 <div class="label">First Seen</div><div class="value">{esc(customer.get("first_seen"))}</div>
@@ -1062,6 +1123,30 @@ async def customer_profile(phone: str, key: str = ""):
                     <br><br><button type="submit">Save Assignment</button>
                 </form>
 
+                <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
+                <h3>Sales Pipeline</h3>
+                <form method="post" action="/customer/{esc(phone)}/pipeline?key={esc(DASHBOARD_KEY)}">
+                    <select name="pipeline_stage" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;">
+                        {"".join(f'<option value="{esc(stage)}" {"selected" if (customer.get("pipeline_stage") or "NEW") == stage else ""}>{esc(stage)}</option>' for stage in PIPELINE_STAGES)}
+                    </select>
+                    <br><br><button type="submit">Update Pipeline</button>
+                </form>
+
+                <h3>Task Management</h3>
+                <form method="post" action="/customer/{esc(phone)}/task?key={esc(DASHBOARD_KEY)}">
+                    <textarea name="task_text" placeholder="Example: Call customer, send catalogue, prepare quote..." style="min-height:85px;">{esc(customer.get("task_text") or "")}</textarea>
+                    <label class="label">Task Due Date & Time</label>
+                    <input type="datetime-local" name="task_due_at" value="{esc((customer.get("task_due_at") or "")[:16])}" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;box-sizing:border-box;">
+                    <label class="label">Task Status</label>
+                    <select name="task_status" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;">
+                        {"".join(f'<option value="{esc(st)}" {"selected" if (customer.get("task_status") or "OPEN") == st else ""}>{esc(st)}</option>' for st in TASK_STATUSES)}
+                    </select>
+                    <br><br>
+                    <button type="submit" name="action" value="save">Save Task</button>
+                    <button type="submit" name="action" value="done" style="background:#166534;">Mark Done</button>
+                    <button type="submit" name="action" value="clear" style="background:#991b1b;">Clear</button>
+                </form>
+
                 <h3>Follow-up Reminder</h3>
                 <form method="post" action="/customer/{esc(phone)}/followup?key={esc(DASHBOARD_KEY)}">
                     <label class="label">Date & Time</label>
@@ -1072,6 +1157,14 @@ async def customer_profile(phone: str, key: str = ""):
                     <button type="submit" name="action" value="save">Save Follow-up</button>
                     <button type="submit" name="action" value="done" style="background:#166534;">Mark Done</button>
                     <button type="submit" name="action" value="clear" style="background:#991b1b;">Clear</button>
+                </form>
+
+                <h3>Quick Reply Templates</h3>
+                <form method="post" action="/customer/{esc(phone)}/send-template?key={esc(DASHBOARD_KEY)}">
+                    <select name="template_key" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;">
+                        {"".join(f'<option value="{esc(k)}">{esc(k.title())}</option>' for k in QUICK_REPLY_TEMPLATES.keys())}
+                    </select>
+                    <br><br><button type="submit" style="background:#1d4ed8;">Send Selected Template</button>
                 </form>
 
                 <h3>Send Manual Follow-up</h3>
@@ -1250,11 +1343,94 @@ async def send_customer_followup(phone: str, key: str = "", message: str = Form(
     return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
 
 
+
+@app.post("/customer/{phone}/pipeline")
+async def update_customer_pipeline(phone: str, key: str = "", pipeline_stage: str = Form("NEW")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    stage = (pipeline_stage or "NEW").strip().upper()
+    if stage not in PIPELINE_STAGES:
+        stage = "NEW"
+    customers[phone]["pipeline_stage"] = stage
+    customers[phone]["pipeline_updated_at"] = datetime.utcnow().isoformat() + "Z"
+    if stage == "QUALIFIED":
+        customers[phone]["lead_status"] = "QUALIFIED_LEAD"
+    elif stage == "QUOTE_SENT":
+        customers[phone]["lead_status"] = "QUOTE_SENT"
+    elif stage == "ORDER_CONFIRMED":
+        customers[phone]["lead_status"] = "ORDER_POSSIBLE"
+    elif stage in ("CLOSED", "LOST"):
+        customers[phone]["lead_status"] = "CLOSED"
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/customer/{phone}/task")
+async def update_customer_task(
+    phone: str,
+    key: str = "",
+    task_text: str = Form(""),
+    task_due_at: str = Form(""),
+    task_status: str = Form("OPEN"),
+    action: str = Form("save"),
+):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    now = datetime.utcnow().isoformat() + "Z"
+    if action == "clear":
+        for field in ("task_text", "task_due_at", "task_status", "task_done_at"):
+            customers[phone].pop(field, None)
+        customers[phone]["task_updated_at"] = now
+    elif action == "done":
+        customers[phone]["task_status"] = "DONE"
+        customers[phone]["task_done_at"] = now
+        customers[phone]["task_updated_at"] = now
+    else:
+        customers[phone]["task_text"] = (task_text or "").strip()
+        customers[phone]["task_due_at"] = task_due_at
+        status = (task_status or "OPEN").strip().upper()
+        customers[phone]["task_status"] = status if status in TASK_STATUSES else "OPEN"
+        customers[phone]["task_updated_at"] = now
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/customer/{phone}/send-template")
+async def send_customer_template(phone: str, key: str = "", template_key: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    clean_key = (template_key or "").strip()
+    message = QUICK_REPLY_TEMPLATES.get(clean_key)
+    if not message:
+        return HTMLResponse(content="Template not found", status_code=404)
+    success = await whatsapp.send_text_message(to=phone, body=message)
+    now = datetime.utcnow().isoformat() + "Z"
+    if success:
+        customers[phone]["last_template_sent"] = clean_key
+        customers[phone]["last_template_sent_at"] = now
+        customers[phone]["template_sent_count"] = int(customers[phone].get("template_sent_count") or 0) + 1
+        _save_customers(customers)
+        _append_outbound_message(phone=phone, body=message)
+    else:
+        customers[phone]["last_template_failed_at"] = now
+        customers[phone]["last_template_failed"] = clean_key
+        _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "1.2.0",
+        "version": "1.5.0",
         "status":  "running",
     }
