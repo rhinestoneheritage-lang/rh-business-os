@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v1.0
+RH Business OS — WhatsApp AI Bot v1.1
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -113,9 +113,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v1.0",
+    title="RH Business OS — WhatsApp AI Bot v1.1",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 whatsapp = WhatsAppService(
@@ -254,6 +254,27 @@ def _append_message(record: dict) -> None:
         logger.error("Failed to save message: %s", exc)
 
 
+
+
+
+def _append_outbound_message(phone: str, body: str, message_type: str = "text") -> None:
+    """Append an outbound CRM/agent message to the immutable log file."""
+    _append_message({
+        "message_id": f"manual-{int(datetime.utcnow().timestamp())}",
+        "from": "RH_BUSINESS_OS",
+        "to": phone,
+        "timestamp": str(int(datetime.utcnow().timestamp())),
+        "received_at": datetime.utcnow().isoformat() + "Z",
+        "direction": "outbound",
+        "type": message_type,
+        "body": body,
+        "raw": {"source": "crm_manual_send"},
+    })
+
+
+def _customer_message_filter(message: dict, phone: str) -> bool:
+    """Return messages belonging to one customer, inbound or outbound."""
+    return str(message.get("from")) == str(phone) or str(message.get("to")) == str(phone)
 
 def _load_messages() -> list:
     """Load message history."""
@@ -519,7 +540,7 @@ def _format_followup(value: str | None) -> str:
         return ""
     return dt.strftime("%d %b %Y, %I:%M %p")
 
-# ── CRM Dashboard v1.0 ────────────────────────────────────────────────────────
+# ── CRM Dashboard v1.1 ────────────────────────────────────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     if key != DASHBOARD_KEY:
@@ -550,6 +571,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     today_followups = sum(1 for c in rows if _followup_status(c) == "today")
     missed_followups = sum(1 for c in rows if _followup_status(c) == "missed")
     upcoming_followups = sum(1 for c in rows if _followup_status(c) == "upcoming")
+    followups_sent = sum(1 for c in rows if c.get("last_followup_sent_at"))
 
     query = (q or "").strip().lower()
 
@@ -571,6 +593,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
         rows = [c for c in rows if _followup_status(c) == "missed"]
     elif filter == "followup_upcoming":
         rows = [c for c in rows if _followup_status(c) == "upcoming"]
+    elif filter == "followup_sent":
+        rows = [c for c in rows if c.get("last_followup_sent_at")]
 
     if query:
         rows = [
@@ -580,6 +604,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             or query in str(c.get("lead_status", "")).lower()
             or query in str(c.get("last_message", "")).lower()
             or query in str(c.get("notes", "")).lower()
+            or query in str(c.get("followup_note", "")).lower()
         ]
 
     def esc(value):
@@ -593,6 +618,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             return "qualified"
         if status == "WEBSITE_SENT":
             return "website"
+        if status == "FOLLOW_UP_SENT":
+            return "qualified"
         if status in ("WAITING_DESIGN", "WAITING_MOQ", "WAITING_BUYER_TYPE"):
             return "waiting"
         return "new"
@@ -623,6 +650,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             <td>{esc(short_date(c.get("first_seen")))}</td>
             <td>{esc(short_date(c.get("last_seen")))}</td>
             <td><span class="pill {followup_class(c)}">{esc(_format_followup(c.get("followup_at")) or "Not set")}</span></td>
+            <td>{esc(short_date(c.get("last_followup_sent_at")))}</td>
         </tr>
         """
 
@@ -641,6 +669,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                     <th>First Seen</th>
                     <th>Last Seen</th>
                     <th>Follow-up</th>
+                    <th>Last Sent</th>
                 </tr>
             </thead>
             <tbody>{rows_html}</tbody>
@@ -804,6 +833,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             <div class="card"><div class="card-title">Today Follow-ups</div><div class="card-value">{today_followups}</div></div>
             <div class="card"><div class="card-title">Missed Follow-ups</div><div class="card-value">{missed_followups}</div></div>
             <div class="card"><div class="card-title">Upcoming Follow-ups</div><div class="card-value">{upcoming_followups}</div></div>
+            <div class="card"><div class="card-title">Follow-ups Sent</div><div class="card-value">{followups_sent}</div></div>
         </div>
 
         <div class="toolbar">
@@ -825,6 +855,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                 {filter_link("Today Follow-ups", "followup_today")}
                 {filter_link("Missed Follow-ups", "followup_missed")}
                 {filter_link("Upcoming Follow-ups", "followup_upcoming")}
+                {filter_link("Follow-up Sent", "followup_sent")}
             </div>
         </div>
 
@@ -856,6 +887,8 @@ async def export_dashboard(key: str = ""):
         "Follow-up At",
         "Follow-up Note",
         "Follow-up Done",
+        "Last Follow-up Sent At",
+        "Follow-up Sent Count",
     ])
 
     for c in sorted(customers.values(), key=lambda x: x.get("last_seen", ""), reverse=True):
@@ -870,6 +903,8 @@ async def export_dashboard(key: str = ""):
             c.get("followup_at", ""),
             c.get("followup_note", ""),
             c.get("followup_done", ""),
+            c.get("last_followup_sent_at", ""),
+            c.get("followup_sent_count", ""),
         ])
 
     output.seek(0)
@@ -898,13 +933,15 @@ async def customer_profile(phone: str, key: str = ""):
         return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
 
     all_messages = _load_messages()
-    customer_messages = [m for m in all_messages if str(m.get("from")) == str(phone)]
+    customer_messages = [m for m in all_messages if _customer_message_filter(m, phone)]
 
     msg_html = ""
     for m in customer_messages[-100:]:
+        direction = "OUT" if m.get("direction") == "outbound" else "IN"
+        msg_class = "msg outbound" if m.get("direction") == "outbound" else "msg"
         msg_html += f"""
-        <div class="msg">
-            <div class="msg-time">{esc(m.get("received_at"))} • {esc(m.get("type"))}</div>
+        <div class="{msg_class}">
+            <div class="msg-time">{esc(direction)} • {esc(m.get("received_at"))} • {esc(m.get("type"))}</div>
             <div class="msg-body">{esc(m.get("body"))}</div>
         </div>
         """
@@ -930,6 +967,7 @@ async def customer_profile(phone: str, key: str = ""):
             .pill {{ display:inline-block; padding:6px 10px; border-radius:999px; background:#e8f0ff; font-size:13px; font-weight:700; }}
             textarea {{ width:100%; min-height:140px; padding:12px; border:1px solid #ddd; border-radius:10px; font-size:14px; box-sizing:border-box; }}
             .msg {{ background:#fff; border:1px solid #eee; border-radius:12px; padding:12px; margin-bottom:10px; }}
+            .msg.outbound {{ background:#f0fdf4; border-color:#bbf7d0; }}
             .msg-time {{ color:#777; font-size:12px; margin-bottom:6px; }}
             .msg-body {{ font-size:15px; white-space:pre-wrap; }}
             .empty {{ background:white; padding:20px; border-radius:12px; color:#777; text-align:center; }}
@@ -960,6 +998,8 @@ async def customer_profile(phone: str, key: str = ""):
                 <div class="label">Last Seen</div><div class="value">{esc(customer.get("last_seen"))}</div>
                 <div class="label">Follow-up</div><div class="value">{esc(_format_followup(customer.get("followup_at")) or "Not set")}</div>
                 <div class="label">Follow-up Status</div><div class="value">{esc(_followup_status(customer).upper())}</div>
+                <div class="label">Last Follow-up Sent</div><div class="value">{esc(customer.get("last_followup_sent_at") or "Not sent")}</div>
+                <div class="label">Follow-up Sent Count</div><div class="value">{esc(customer.get("followup_sent_count") or 0)}</div>
 
                 <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
                 <h3>Lead Controls</h3>
@@ -971,6 +1011,7 @@ async def customer_profile(phone: str, key: str = ""):
                         <option value="QUALIFIED_LEAD">QUALIFIED_LEAD</option>
                         <option value="WEBSITE_SENT">WEBSITE_SENT</option>
                         <option value="FOLLOW_UP">FOLLOW_UP</option>
+                        <option value="FOLLOW_UP_SENT">FOLLOW_UP_SENT</option>
                         <option value="ORDER_POSSIBLE">ORDER_POSSIBLE</option>
                         <option value="CLOSED">CLOSED</option>
                     </select>
@@ -996,6 +1037,12 @@ async def customer_profile(phone: str, key: str = ""):
                     <button type="submit" name="action" value="save">Save Follow-up</button>
                     <button type="submit" name="action" value="done" style="background:#166534;">Mark Done</button>
                     <button type="submit" name="action" value="clear" style="background:#991b1b;">Clear</button>
+                </form>
+
+                <h3>Send Manual Follow-up</h3>
+                <form method="post" action="/customer/{esc(phone)}/send-followup?key={esc(DASHBOARD_KEY)}">
+                    <textarea name="message" placeholder="Write follow-up WhatsApp message..." style="min-height:130px;">{esc(customer.get("followup_message_template") or MSG_FOLLOWUP_WHOLESALER)}</textarea>
+                    <br><br><button type="submit" style="background:#1d4ed8;">Send WhatsApp Follow-up</button>
                 </form>
 
                 <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
@@ -1105,11 +1152,48 @@ async def update_customer_followup(
     return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
 
 
+
+
+@app.post("/customer/{phone}/send-followup")
+async def send_customer_followup(phone: str, key: str = "", message: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+
+    clean_message = (message or "").strip()
+    if not clean_message:
+        return HTMLResponse(content="Message cannot be empty", status_code=400)
+
+    success = await whatsapp.send_text_message(to=phone, body=clean_message)
+    now = datetime.utcnow().isoformat() + "Z"
+
+    if success:
+        customers[phone]["last_followup_sent_at"] = now
+        customers[phone]["followup_sent_count"] = int(customers[phone].get("followup_sent_count") or 0) + 1
+        customers[phone]["followup_message_template"] = clean_message
+        customers[phone]["followup_done"] = True
+        customers[phone]["followup_done_at"] = now
+        customers[phone]["lead_status"] = "FOLLOW_UP_SENT"
+        _save_customers(customers)
+        _append_outbound_message(phone=phone, body=clean_message)
+        logger.info("✅ Manual follow-up sent | to=%s", phone)
+    else:
+        customers[phone]["last_followup_failed_at"] = now
+        customers[phone]["last_followup_failed_message"] = clean_message
+        _save_customers(customers)
+        logger.warning("⚠️ Manual follow-up failed | to=%s", phone)
+
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "status":  "running",
     }
