@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v3.0
+RH Business OS — WhatsApp AI Bot v3.5
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -124,9 +124,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v3.0",
+    title="RH Business OS — WhatsApp AI Bot v3.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="3.0.0",
+    version="3.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -2092,11 +2092,247 @@ async def production_dashboard(key: str = ""):
     """)
 
 
+# ── Inventory Module v3.1–v3.5 ──────────────────────────────────────────────
+# v3.1 Stone Stock • v3.2 Material Stock • v3.3 Stock Ledger
+# v3.4 Low Stock Alerts • v3.5 Inventory Dashboard + CSV Export
+
+INVENTORY_FILE = os.getenv("INVENTORY_FILE", "data/inventory.json")
+INVENTORY_CATEGORIES = ["Stone", "Hotfix Film", "Transfer Tape", "Packing", "Machine", "Other"]
+STOCK_ACTIONS = ["IN", "OUT", "ADJUST"]
+
+
+def _load_inventory() -> dict:
+    if not os.path.exists(INVENTORY_FILE):
+        return {"items": {}, "ledger": []}
+    try:
+        with open(INVENTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data.setdefault("items", {})
+        data.setdefault("ledger", [])
+        return data
+    except Exception as exc:
+        logger.error("Failed to load inventory: %s", exc)
+        return {"items": {}, "ledger": []}
+
+
+def _save_inventory(data: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(INVENTORY_FILE), exist_ok=True)
+        with open(INVENTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error("Failed to save inventory: %s", exc)
+
+
+def _inventory_item_id(category: str, name: str, variant: str) -> str:
+    raw = f"{category}-{name}-{variant}".lower().strip()
+    safe = "".join(ch if ch.isalnum() else "-" for ch in raw)
+    while "--" in safe:
+        safe = safe.replace("--", "-")
+    return safe.strip("-") or f"item-{int(datetime.utcnow().timestamp())}"
+
+
+def _stock_number(value) -> float:
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _fmt_qty(value) -> str:
+    n = _stock_number(value)
+    if n.is_integer():
+        return str(int(n))
+    return f"{n:.2f}"
+
+
+def _inventory_summary(data: dict) -> dict:
+    items = list(data.get("items", {}).values())
+    total_items = len(items)
+    low_stock = [i for i in items if _stock_number(i.get("current_stock")) <= _stock_number(i.get("min_stock"))]
+    stones = [i for i in items if i.get("category") == "Stone"]
+    materials = [i for i in items if i.get("category") != "Stone"]
+    return {
+        "total_items": total_items,
+        "low_stock_count": len(low_stock),
+        "stone_items": len(stones),
+        "material_items": len(materials),
+        "ledger_count": len(data.get("ledger", [])),
+    }
+
+
+@app.get("/inventory", response_class=HTMLResponse)
+async def inventory_dashboard(key: str = "", category: str = "all", low: str = "0", q: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    data = _load_inventory()
+    summary = _inventory_summary(data)
+    items = list(data.get("items", {}).values())
+    query = (q or "").strip().lower()
+
+    if category != "all":
+        items = [i for i in items if i.get("category") == category]
+    if low == "1":
+        items = [i for i in items if _stock_number(i.get("current_stock")) <= _stock_number(i.get("min_stock"))]
+    if query:
+        items = [i for i in items if query in str(i.get("name", "")).lower() or query in str(i.get("variant", "")).lower() or query in str(i.get("supplier", "")).lower()]
+
+    def esc(value):
+        if value is None:
+            return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    cat_options = "".join(f"<option value='{esc(c)}'>{esc(c)}</option>" for c in INVENTORY_CATEGORIES)
+    filter_links = " ".join([f"<a class='btn light' href='/inventory?key={esc(DASHBOARD_KEY)}&category={esc(c)}'>{esc(c)}</a>" for c in INVENTORY_CATEGORIES])
+
+    rows = ""
+    for item in sorted(items, key=lambda x: (x.get("category", ""), x.get("name", ""))):
+        is_low = _stock_number(item.get("current_stock")) <= _stock_number(item.get("min_stock"))
+        rows += f"""
+        <tr class='{"low" if is_low else ""}'>
+            <td><a href='/inventory/item/{esc(item.get('item_id'))}?key={esc(DASHBOARD_KEY)}'><b>{esc(item.get('name'))}</b></a><br><span>{esc(item.get('variant'))}</span></td>
+            <td>{esc(item.get('category'))}</td>
+            <td>{_fmt_qty(item.get('current_stock'))} {esc(item.get('unit'))}</td>
+            <td>{_fmt_qty(item.get('min_stock'))} {esc(item.get('unit'))}</td>
+            <td>{esc(item.get('supplier'))}</td>
+            <td>{esc(item.get('updated_at'))[:19]}</td>
+        </tr>
+        """
+    if not rows:
+        rows = "<tr><td colspan='6' style='text-align:center;color:#777;padding:24px'>No inventory items found.</td></tr>"
+
+    recent = ""
+    for entry in data.get("ledger", [])[-10:][::-1]:
+        recent += f"<tr><td>{esc(entry.get('created_at'))[:19]}</td><td>{esc(entry.get('action'))}</td><td>{esc(entry.get('item_name'))}</td><td>{_fmt_qty(entry.get('qty'))}</td><td>{esc(entry.get('note'))}</td></tr>"
+    if not recent:
+        recent = "<tr><td colspan='5' style='text-align:center;color:#777;padding:18px'>No stock movement yet.</td></tr>"
+
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Inventory Dashboard</title>
+    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px;color:#111}} .top{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}} .card{{background:white;border:1px solid #e5e5e5;border-radius:14px;padding:16px}} .value{{font-size:26px;font-weight:800;margin-top:6px}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer;display:inline-block;margin:3px}} .light{{background:white!important;color:#111!important;border:1px solid #ddd!important}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:14px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}} th{{background:#111;color:white}} tr.low td{{background:#fff7ed}} input,select{{padding:10px;border:1px solid #ddd;border-radius:10px}} .grid{{display:grid;grid-template-columns:360px 1fr;gap:16px}} @media(max-width:900px){{body{{padding:14px}} .grid{{grid-template-columns:1fr}} table{{display:block;overflow-x:auto}}}}</style></head><body>
+    <div class='top'><h1>Inventory Dashboard</h1><p><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>CRM</a> <a class='btn' href='/orders?key={esc(DASHBOARD_KEY)}'>Orders</a> <a class='btn' href='/inventory/export?key={esc(DASHBOARD_KEY)}'>Export CSV</a></p></div>
+    <div class='cards'><div class='card'>Total Items<div class='value'>{summary['total_items']}</div></div><div class='card'>Stone Items<div class='value'>{summary['stone_items']}</div></div><div class='card'>Material Items<div class='value'>{summary['material_items']}</div></div><div class='card'>Low Stock<div class='value'>{summary['low_stock_count']}</div></div><div class='card'>Ledger Entries<div class='value'>{summary['ledger_count']}</div></div></div>
+    <div class='grid'><div class='card'><h2>Add / Update Item</h2><form method='post' action='/inventory/item/save?key={esc(DASHBOARD_KEY)}'><label>Category</label><br><select name='category'>{cat_options}</select><br><br><label>Name</label><br><input name='name' required placeholder='SS4 Crystal / Transfer Tape'><br><br><label>Variant / Size / Colour</label><br><input name='variant' placeholder='1.8mm Crystal / 12 inch'><br><br><label>Unit</label><br><input name='unit' value='pcs'><br><br><label>Opening Stock</label><br><input type='number' step='0.01' name='current_stock' value='0'><br><br><label>Minimum Stock Alert</label><br><input type='number' step='0.01' name='min_stock' value='0'><br><br><label>Supplier</label><br><input name='supplier'><br><br><button>Save Item</button></form></div>
+    <div><form method='get' action='/inventory'><input type='hidden' name='key' value='{esc(DASHBOARD_KEY)}'><input name='q' value='{esc(q)}' placeholder='Search stock...'> <button>Search</button> <a class='btn light' href='/inventory?key={esc(DASHBOARD_KEY)}'>All</a> <a class='btn light' href='/inventory?key={esc(DASHBOARD_KEY)}&low=1'>Low Stock</a> {filter_links}</form><table><thead><tr><th>Item</th><th>Category</th><th>Stock</th><th>Minimum</th><th>Supplier</th><th>Updated</th></tr></thead><tbody>{rows}</tbody></table><h2>Recent Stock Movement</h2><table><thead><tr><th>Date</th><th>Action</th><th>Item</th><th>Qty</th><th>Note</th></tr></thead><tbody>{recent}</tbody></table></div></div>
+    </body></html>
+    """)
+
+
+@app.post("/inventory/item/save")
+async def save_inventory_item(key: str = "", category: str = Form("Other"), name: str = Form(""), variant: str = Form(""), unit: str = Form("pcs"), current_stock: str = Form("0"), min_stock: str = Form("0"), supplier: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    data = _load_inventory()
+    now = datetime.utcnow().isoformat() + "Z"
+    category = category if category in INVENTORY_CATEGORIES else "Other"
+    item_id = _inventory_item_id(category, name, variant)
+    old = data["items"].get(item_id, {})
+    item = {
+        "item_id": item_id,
+        "category": category,
+        "name": name.strip(),
+        "variant": variant.strip(),
+        "unit": unit.strip() or "pcs",
+        "current_stock": _stock_number(current_stock),
+        "min_stock": _stock_number(min_stock),
+        "supplier": supplier.strip(),
+        "created_at": old.get("created_at") or now,
+        "updated_at": now,
+    }
+    data["items"][item_id] = item
+    if not old:
+        data["ledger"].append({"created_at": now, "item_id": item_id, "item_name": item["name"], "action": "OPENING", "qty": item["current_stock"], "balance": item["current_stock"], "note": "Opening stock"})
+    _save_inventory(data)
+    return RedirectResponse(url=f"/inventory/item/{item_id}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/inventory/item/{item_id}", response_class=HTMLResponse)
+async def inventory_item_detail(item_id: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    data = _load_inventory()
+    item = data.get("items", {}).get(item_id)
+    if not item:
+        return HTMLResponse(content="Inventory item not found", status_code=404)
+
+    def esc(value):
+        if value is None:
+            return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    action_options = "".join(f"<option value='{a}'>{a}</option>" for a in STOCK_ACTIONS)
+    cat_options = "".join(f"<option value='{esc(c)}' {'selected' if item.get('category')==c else ''}>{esc(c)}</option>" for c in INVENTORY_CATEGORIES)
+    history = [e for e in data.get("ledger", []) if e.get("item_id") == item_id]
+    rows = "".join(f"<tr><td>{esc(e.get('created_at'))[:19]}</td><td>{esc(e.get('action'))}</td><td>{_fmt_qty(e.get('qty'))}</td><td>{_fmt_qty(e.get('balance'))}</td><td>{esc(e.get('note'))}</td></tr>" for e in history[::-1]) or "<tr><td colspan='5' style='color:#777;text-align:center;padding:18px'>No history yet.</td></tr>"
+    low_badge = "<span style='background:#fed7aa;padding:6px 10px;border-radius:999px;font-weight:700'>LOW STOCK</span>" if _stock_number(item.get("current_stock")) <= _stock_number(item.get("min_stock")) else "<span style='background:#dcfce7;padding:6px 10px;border-radius:999px;font-weight:700'>OK</span>"
+
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>{esc(item.get('name'))}</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .grid{{display:grid;grid-template-columns:360px 1fr;gap:16px}} .card{{background:white;border:1px solid #e5e5e5;border-radius:14px;padding:18px}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer}} input,select,textarea{{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;box-sizing:border-box}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}} @media(max-width:850px){{.grid{{grid-template-columns:1fr}}}}</style></head><body>
+    <p><a class='btn' href='/inventory?key={esc(DASHBOARD_KEY)}'>Back Inventory</a></p><h1>{esc(item.get('name'))}</h1><p>{esc(item.get('variant'))} • Current Stock: <b>{_fmt_qty(item.get('current_stock'))} {esc(item.get('unit'))}</b> {low_badge}</p>
+    <div class='grid'><div class='card'><h2>Stock In / Out</h2><form method='post' action='/inventory/item/{esc(item_id)}/movement?key={esc(DASHBOARD_KEY)}'><label>Action</label><select name='action'>{action_options}</select><br><br><label>Qty</label><input type='number' step='0.01' name='qty' required><br><br><label>Note</label><textarea name='note'></textarea><br><br><button>Save Movement</button></form><hr><h2>Edit Item</h2><form method='post' action='/inventory/item/save?key={esc(DASHBOARD_KEY)}'><label>Category</label><select name='category'>{cat_options}</select><br><br><label>Name</label><input name='name' value='{esc(item.get('name'))}' required><br><br><label>Variant</label><input name='variant' value='{esc(item.get('variant'))}'><br><br><label>Unit</label><input name='unit' value='{esc(item.get('unit'))}'><br><br><label>Current Stock</label><input type='number' step='0.01' name='current_stock' value='{esc(item.get('current_stock'))}'><br><br><label>Minimum Stock</label><input type='number' step='0.01' name='min_stock' value='{esc(item.get('min_stock'))}'><br><br><label>Supplier</label><input name='supplier' value='{esc(item.get('supplier'))}'><br><br><button>Update Item</button></form></div><div class='card'><h2>Stock History</h2><table><thead><tr><th>Date</th><th>Action</th><th>Qty</th><th>Balance</th><th>Note</th></tr></thead><tbody>{rows}</tbody></table></div></div>
+    </body></html>
+    """)
+
+
+@app.post("/inventory/item/{item_id}/movement")
+async def inventory_stock_movement(item_id: str, key: str = "", action: str = Form("IN"), qty: str = Form("0"), note: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    data = _load_inventory()
+    item = data.get("items", {}).get(item_id)
+    if not item:
+        return HTMLResponse(content="Inventory item not found", status_code=404)
+    amount = _stock_number(qty)
+    action = action if action in STOCK_ACTIONS else "IN"
+    current = _stock_number(item.get("current_stock"))
+    if action == "IN":
+        current += amount
+    elif action == "OUT":
+        current -= amount
+    else:
+        current = amount
+    item["current_stock"] = current
+    item["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    data.setdefault("ledger", []).append({"created_at": item["updated_at"], "item_id": item_id, "item_name": item.get("name"), "action": action, "qty": amount, "balance": current, "note": note})
+    _save_inventory(data)
+    return RedirectResponse(url=f"/inventory/item/{item_id}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/inventory/export")
+async def export_inventory(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return JSONResponse(content={"error": "Access denied"}, status_code=401)
+    data = _load_inventory()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Item ID", "Category", "Name", "Variant", "Unit", "Current Stock", "Minimum Stock", "Supplier", "Updated At"])
+    for i in sorted(data.get("items", {}).values(), key=lambda x: (x.get("category", ""), x.get("name", ""))):
+        writer.writerow([i.get("item_id", ""), i.get("category", ""), i.get("name", ""), i.get("variant", ""), i.get("unit", ""), i.get("current_stock", ""), i.get("min_stock", ""), i.get("supplier", ""), i.get("updated_at", "")])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=rh_inventory.csv"})
+
+
+@app.get("/inventory/ledger/export")
+async def export_inventory_ledger(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return JSONResponse(content={"error": "Access denied"}, status_code=401)
+    data = _load_inventory()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Created At", "Item ID", "Item Name", "Action", "Qty", "Balance", "Note"])
+    for e in data.get("ledger", []):
+        writer.writerow([e.get("created_at", ""), e.get("item_id", ""), e.get("item_name", ""), e.get("action", ""), e.get("qty", ""), e.get("balance", ""), e.get("note", "")])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=rh_inventory_ledger.csv"})
+
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "3.0.0",
+        "version": "3.5.0",
         "status":  "running",
     }
