@@ -570,7 +570,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
         status = c.get("lead_status") or ""
         rows_html += f"""
         <tr>
-            <td class="phone">{esc(c.get("phone_number"))}</td>
+            <td class="phone"><a style="color:#111;font-weight:700;text-decoration:none;" href="/customer/{esc(c.get('phone_number'))}?key={esc(DASHBOARD_KEY)}">{esc(c.get("phone_number"))}</a></td>
             <td><span class="pill buyer">{esc(c.get("buyer_type") or "unknown")}</span></td>
             <td><span class="pill {status_class(status)}">{esc(status)}</span></td>
             <td class="lastmsg">{esc(c.get("last_message"))}</td>
@@ -587,7 +587,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
         <table>
             <thead>
                 <tr>
-                    <th>Phone</th>
+                    <th>Phone (click)</th>
                     <th>Buyer Type</th>
                     <th>Status</th>
                     <th>Last Message</th>
