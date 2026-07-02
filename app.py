@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v1.1
+RH Business OS — WhatsApp AI Bot v1.2
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -46,6 +46,7 @@ MESSAGES_FILE   = os.getenv("MESSAGES_FILE", "data/messages.json")
 SESSIONS_FILE   = os.getenv("SESSIONS_FILE", "data/sessions.json")
 CUSTOMERS_FILE  = os.getenv("CUSTOMERS_FILE", "data/customers.json")
 DASHBOARD_KEY  = os.getenv("DASHBOARD_KEY", "RH2026")
+ASSIGNEES = [name.strip() for name in os.getenv("CRM_ASSIGNEES", "Shifa,Hasan,Awais,Aquib").split(",") if name.strip()]
 
 # ── States ────────────────────────────────────────────────────────────────────
 STATE_NEW                    = "NEW"
@@ -113,9 +114,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v1.1",
+    title="RH Business OS — WhatsApp AI Bot v1.2",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 whatsapp = WhatsAppService(
@@ -540,7 +541,7 @@ def _format_followup(value: str | None) -> str:
         return ""
     return dt.strftime("%d %b %Y, %I:%M %p")
 
-# ── CRM Dashboard v1.1 ────────────────────────────────────────────────────────
+# ── CRM Dashboard v1.2 ────────────────────────────────────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     if key != DASHBOARD_KEY:
@@ -572,6 +573,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     missed_followups = sum(1 for c in rows if _followup_status(c) == "missed")
     upcoming_followups = sum(1 for c in rows if _followup_status(c) == "upcoming")
     followups_sent = sum(1 for c in rows if c.get("last_followup_sent_at"))
+    assigned_leads = sum(1 for c in rows if c.get("assigned_to"))
+    unassigned_leads = sum(1 for c in rows if not c.get("assigned_to"))
 
     query = (q or "").strip().lower()
 
@@ -595,6 +598,13 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
         rows = [c for c in rows if _followup_status(c) == "upcoming"]
     elif filter == "followup_sent":
         rows = [c for c in rows if c.get("last_followup_sent_at")]
+    elif filter == "assigned":
+        rows = [c for c in rows if c.get("assigned_to")]
+    elif filter == "unassigned":
+        rows = [c for c in rows if not c.get("assigned_to")]
+    elif filter.startswith("assigned_"):
+        assigned_name = filter.replace("assigned_", "", 1).lower()
+        rows = [c for c in rows if str(c.get("assigned_to", "")).lower() == assigned_name]
 
     if query:
         rows = [
@@ -605,6 +615,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             or query in str(c.get("last_message", "")).lower()
             or query in str(c.get("notes", "")).lower()
             or query in str(c.get("followup_note", "")).lower()
+            or query in str(c.get("assigned_to", "")).lower()
         ]
 
     def esc(value):
@@ -645,6 +656,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             <td class="phone"><a style="color:#111;font-weight:700;text-decoration:none;" href="/customer/{esc(c.get('phone_number'))}?key={esc(DASHBOARD_KEY)}">{esc(c.get("phone_number"))}</a></td>
             <td><span class="pill buyer">{esc(c.get("buyer_type") or "unknown")}</span></td>
             <td><span class="pill {status_class(status)}">{esc(status)}</span></td>
+            <td><span class="pill assigned">{esc(c.get("assigned_to") or "Unassigned")}</span></td>
             <td class="lastmsg">{esc(c.get("last_message"))}</td>
             <td>{esc(c.get("message_count"))}</td>
             <td>{esc(short_date(c.get("first_seen")))}</td>
@@ -664,6 +676,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                     <th>Phone (click)</th>
                     <th>Buyer Type</th>
                     <th>Status</th>
+                    <th>Assigned To</th>
                     <th>Last Message</th>
                     <th>Messages</th>
                     <th>First Seen</th>
@@ -786,6 +799,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                 background: #eee;
             }}
             .buyer {{ background: #e8f0ff; }}
+            .assigned {{ background:#f3e8ff; color:#6b21a8; }}
             .qualified {{ background: #dcfce7; color: #166534; }}
             .website {{ background: #fff7ed; color: #9a3412; }}
             .waiting {{ background: #fef9c3; color: #854d0e; }}
@@ -834,6 +848,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             <div class="card"><div class="card-title">Missed Follow-ups</div><div class="card-value">{missed_followups}</div></div>
             <div class="card"><div class="card-title">Upcoming Follow-ups</div><div class="card-value">{upcoming_followups}</div></div>
             <div class="card"><div class="card-title">Follow-ups Sent</div><div class="card-value">{followups_sent}</div></div>
+            <div class="card"><div class="card-title">Assigned Leads</div><div class="card-value">{assigned_leads}</div></div>
+            <div class="card"><div class="card-title">Unassigned Leads</div><div class="card-value">{unassigned_leads}</div></div>
         </div>
 
         <div class="toolbar">
@@ -856,6 +872,9 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                 {filter_link("Missed Follow-ups", "followup_missed")}
                 {filter_link("Upcoming Follow-ups", "followup_upcoming")}
                 {filter_link("Follow-up Sent", "followup_sent")}
+                {filter_link("Assigned", "assigned")}
+                {filter_link("Unassigned", "unassigned")}
+                {"".join(filter_link(name, "assigned_" + name.lower()) for name in ASSIGNEES)}
             </div>
         </div>
 
@@ -880,6 +899,8 @@ async def export_dashboard(key: str = ""):
         "Phone Number",
         "Buyer Type",
         "Lead Status",
+        "Assigned To",
+        "Assigned At",
         "Last Message",
         "Message Count",
         "First Seen",
@@ -896,6 +917,8 @@ async def export_dashboard(key: str = ""):
             c.get("phone_number", ""),
             c.get("buyer_type", ""),
             c.get("lead_status", ""),
+            c.get("assigned_to", ""),
+            c.get("assigned_at", ""),
             c.get("last_message", ""),
             c.get("message_count", ""),
             c.get("first_seen", ""),
@@ -965,6 +988,7 @@ async def customer_profile(phone: str, key: str = ""):
             .label {{ color:#666; font-size:13px; margin-top:12px; }}
             .value {{ font-weight:700; margin-top:4px; word-break:break-word; }}
             .pill {{ display:inline-block; padding:6px 10px; border-radius:999px; background:#e8f0ff; font-size:13px; font-weight:700; }}
+            .assigned {{ background:#f3e8ff; color:#6b21a8; }}
             textarea {{ width:100%; min-height:140px; padding:12px; border:1px solid #ddd; border-radius:10px; font-size:14px; box-sizing:border-box; }}
             .msg {{ background:#fff; border:1px solid #eee; border-radius:12px; padding:12px; margin-bottom:10px; }}
             .msg.outbound {{ background:#f0fdf4; border-color:#bbf7d0; }}
@@ -992,6 +1016,7 @@ async def customer_profile(phone: str, key: str = ""):
                 <div class="label">Phone</div><div class="value">{esc(customer.get("phone_number"))}</div>
                 <div class="label">Buyer Type</div><div class="value"><span class="pill">{esc(customer.get("buyer_type") or "unknown")}</span></div>
                 <div class="label">Lead Status</div><div class="value">{esc(customer.get("lead_status"))}</div>
+                <div class="label">Assigned To</div><div class="value"><span class="pill assigned">{esc(customer.get("assigned_to") or "Unassigned")}</span></div>
                 <div class="label">Last Message</div><div class="value">{esc(customer.get("last_message"))}</div>
                 <div class="label">Message Count</div><div class="value">{esc(customer.get("message_count"))}</div>
                 <div class="label">First Seen</div><div class="value">{esc(customer.get("first_seen"))}</div>
@@ -1027,6 +1052,16 @@ async def customer_profile(phone: str, key: str = ""):
                 <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
 
                 
+                <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
+                <h3>Lead Assignment</h3>
+                <form method="post" action="/customer/{esc(phone)}/assign?key={esc(DASHBOARD_KEY)}">
+                    <select name="assigned_to" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;">
+                        <option value="">Unassigned</option>
+                        {"".join(f'<option value="{esc(name)}" {"selected" if customer.get("assigned_to") == name else ""}>{esc(name)}</option>' for name in ASSIGNEES)}
+                    </select>
+                    <br><br><button type="submit">Save Assignment</button>
+                </form>
+
                 <h3>Follow-up Reminder</h3>
                 <form method="post" action="/customer/{esc(phone)}/followup?key={esc(DASHBOARD_KEY)}">
                     <label class="label">Date & Time</label>
@@ -1114,6 +1149,32 @@ async def update_hot_lead(phone: str, key: str = "", is_hot_lead: str = Form("")
 
 
 
+@app.post("/customer/{phone}/assign")
+async def assign_customer_lead(phone: str, key: str = "", assigned_to: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+
+    clean_assignee = (assigned_to or "").strip()
+    now = datetime.utcnow().isoformat() + "Z"
+
+    if clean_assignee:
+        customers[phone]["assigned_to"] = clean_assignee
+        customers[phone]["assigned_at"] = now
+    else:
+        customers[phone].pop("assigned_to", None)
+        customers[phone].pop("assigned_at", None)
+        customers[phone]["unassigned_at"] = now
+
+    customers[phone]["assignment_updated_at"] = now
+    _save_customers(customers)
+
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
 @app.post("/customer/{phone}/followup")
 async def update_customer_followup(
     phone: str,
@@ -1194,6 +1255,6 @@ async def send_customer_followup(phone: str, key: str = "", message: str = Form(
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "status":  "running",
     }
