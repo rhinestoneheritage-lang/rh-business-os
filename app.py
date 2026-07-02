@@ -50,6 +50,16 @@ DASHBOARD_KEY  = os.getenv("DASHBOARD_KEY", "RH2026")
 ASSIGNEES = [name.strip() for name in os.getenv("CRM_ASSIGNEES", "Shifa,Hasan,Awais,Aquib").split(",") if name.strip()]
 PIPELINE_STAGES = ["NEW", "CONTACTED", "QUALIFIED", "QUOTE_PENDING", "QUOTE_SENT", "SAMPLE", "ORDER_CONFIRMED", "DISPATCHED", "CLOSED", "LOST"]
 TASK_STATUSES = ["OPEN", "IN_PROGRESS", "DONE"]
+
+# v4.6-v5.5 module files
+DOCUMENTS_FILE = os.getenv("DOCUMENTS_FILE", "data/documents.json")
+DESIGN_REQUESTS_FILE = os.getenv("DESIGN_REQUESTS_FILE", "data/design_requests.json")
+APPROVALS_FILE = os.getenv("APPROVALS_FILE", "data/approvals.json")
+DISPATCH_FILE = os.getenv("DISPATCH_FILE", "data/dispatch.json")
+PAYMENT_REMINDERS_FILE = os.getenv("PAYMENT_REMINDERS_FILE", "data/payment_reminders.json")
+BROADCAST_QUEUE_FILE = os.getenv("BROADCAST_QUEUE_FILE", "data/broadcast_queue.json")
+AUDIT_FILE = os.getenv("AUDIT_FILE", "data/audit.json")
+
 QUICK_REPLY_TEMPLATES = {
     "catalogue": "Hello 👋\n\nThank you for contacting Rhinestone Heritage. You can browse our latest rhinestone transfer sticker collection here:\nhttps://www.rhinestoneheritage.com/collections/rhinestone-transfer-stickers\n\nPlease share the design screenshot and quantity you need.",
     "moq": "Thank you. Please share your approximate quantity (MOQ) for each design. Example: 100 pcs / 500 pcs / 1000 pcs.",
@@ -124,9 +134,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v3.5",
+    title="RH Business OS — WhatsApp AI Bot v5.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="4.5.0",
+    version="5.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -2577,11 +2587,169 @@ async def save_settings(key: str = "", business_name: str = Form(""), default_cu
     return RedirectResponse(url=f"/settings?key={DASHBOARD_KEY}", status_code=303)
 
 
+# ── v4.6 to v5.5 Enterprise Growth Pack ──────────────────────────────────────
+
+def _audit(action: str, detail: dict | None = None) -> None:
+    data = _json_load(AUDIT_FILE, [])
+    data.append({"time": datetime.utcnow().isoformat()+"Z", "action": action, "detail": detail or {}})
+    _json_save(AUDIT_FILE, data[-1000:])
+
+
+@app.get("/growth", response_class=HTMLResponse)
+async def growth_home(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    links = [
+        ("Documents v4.6", "/documents"), ("Design Requests v4.7", "/design-requests"),
+        ("Approvals v4.8", "/approvals"), ("Dispatch v4.9", "/dispatch"),
+        ("Delivery Proof v5.0", "/delivery-proof"), ("Payment Reminders v5.1", "/payment-reminders"),
+        ("Broadcast Queue v5.2", "/broadcast-queue"), ("Data Export v5.3", "/data-export"),
+        ("Audit Log v5.4", "/audit"), ("System Status v5.5", "/system-status"),
+    ]
+    cards = "".join(f"<a class='card' href='{u}?key={_safe_html(DASHBOARD_KEY)}'>{t}</a>" for t,u in links)
+    return HTMLResponse(content=f"""<!doctype html><html><head><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}}.card{{display:block;background:white;padding:20px;border-radius:14px;border:1px solid #eee;color:#111;text-decoration:none;font-weight:800}}</style></head><body><h1>RH Business OS Growth Pack v5.5</h1><p><a href='/dashboard?key={_safe_html(DASHBOARD_KEY)}'>Dashboard</a> · <a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Ops</a></p><div class='grid'>{cards}</div></body></html>""")
+
+
+@app.get("/documents", response_class=HTMLResponse)
+async def documents_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(DOCUMENTS_FILE, {})
+    rows = "".join(f"<tr><td>{_safe_html(d.get('title'))}</td><td>{_safe_html(d.get('type'))}</td><td>{_safe_html(d.get('customer_phone'))}</td><td><a href='{_safe_html(d.get('url'))}' target='_blank'>Open</a></td><td>{_safe_html(d.get('note'))}</td></tr>" for d in data.values()) or "<tr><td colspan='5'>No documents.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Document Manager v4.6</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/documents/save?key={_safe_html(DASHBOARD_KEY)}'><input name='title' placeholder='Title'><input name='type' placeholder='Quote/Invoice/Design'><input name='customer_phone' placeholder='Customer phone'><input name='url' placeholder='File URL'><input name='note' placeholder='Note'><button>Save</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Title</th><th>Type</th><th>Customer</th><th>URL</th><th>Note</th></tr>{rows}</table></body></html>""")
+
+@app.post("/documents/save")
+async def save_document(key: str = "", title: str = Form(""), type: str = Form(""), customer_phone: str = Form(""), url: str = Form(""), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(DOCUMENTS_FILE, {}); did=_now_id("DOC")
+    data[did]={"document_id":did,"title":title,"type":type,"customer_phone":customer_phone,"url":url,"note":note,"created_at":datetime.utcnow().isoformat()+"Z"}
+    _json_save(DOCUMENTS_FILE,data); _audit("document_saved", {"document_id":did})
+    return RedirectResponse(url=f"/documents?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/design-requests", response_class=HTMLResponse)
+async def design_requests_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(DESIGN_REQUESTS_FILE,{})
+    rows="".join(f"<tr><td>{_safe_html(r.get('request_id'))}</td><td>{_safe_html(r.get('customer_phone'))}</td><td>{_safe_html(r.get('design_type'))}</td><td>{_safe_html(r.get('size'))}</td><td>{_safe_html(r.get('stone_size'))}</td><td>{_safe_html(r.get('status'))}</td><td>{_safe_html(r.get('note'))}</td></tr>" for r in data.values()) or "<tr><td colspan='7'>No design requests.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Design Requests v4.7</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/design-requests/save?key={_safe_html(DASHBOARD_KEY)}'><input name='customer_phone' placeholder='Phone'><input name='design_type' placeholder='Tiger/Neck/Logo'><input name='size' placeholder='Size'><input name='stone_size' placeholder='SS4/SS6'><select name='status'><option>NEW</option><option>IN_DESIGN</option><option>PREVIEW_SENT</option><option>APPROVED</option></select><input name='note' placeholder='Note'><button>Save</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>ID</th><th>Phone</th><th>Type</th><th>Size</th><th>Stone</th><th>Status</th><th>Note</th></tr>{rows}</table></body></html>""")
+
+@app.post("/design-requests/save")
+async def save_design_request(key: str = "", customer_phone: str = Form(""), design_type: str = Form(""), size: str = Form(""), stone_size: str = Form(""), status: str = Form("NEW"), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(DESIGN_REQUESTS_FILE,{}); rid=_now_id("DR")
+    data[rid]={"request_id":rid,"customer_phone":customer_phone,"design_type":design_type,"size":size,"stone_size":stone_size,"status":status,"note":note,"created_at":datetime.utcnow().isoformat()+"Z"}
+    _json_save(DESIGN_REQUESTS_FILE,data); _audit("design_request_saved", {"request_id":rid})
+    return RedirectResponse(url=f"/design-requests?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/approvals", response_class=HTMLResponse)
+async def approvals_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(APPROVALS_FILE,{})
+    rows="".join(f"<tr><td>{_safe_html(a.get('approval_id'))}</td><td>{_safe_html(a.get('customer_phone'))}</td><td>{_safe_html(a.get('item'))}</td><td>{_safe_html(a.get('status'))}</td><td>{_safe_html(a.get('approved_at'))}</td><td>{_safe_html(a.get('note'))}</td></tr>" for a in data.values()) or "<tr><td colspan='6'>No approvals.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Approval Tracker v4.8</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/approvals/save?key={_safe_html(DASHBOARD_KEY)}'><input name='customer_phone' placeholder='Phone'><input name='item' placeholder='Quote/Design/Order'><select name='status'><option>PENDING</option><option>APPROVED</option><option>CHANGES_NEEDED</option><option>REJECTED</option></select><input name='note' placeholder='Note'><button>Save Approval</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>ID</th><th>Phone</th><th>Item</th><th>Status</th><th>Approved At</th><th>Note</th></tr>{rows}</table></body></html>""")
+
+@app.post("/approvals/save")
+async def save_approval(key: str = "", customer_phone: str = Form(""), item: str = Form(""), status: str = Form("PENDING"), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(APPROVALS_FILE,{}); aid=_now_id("APR")
+    data[aid]={"approval_id":aid,"customer_phone":customer_phone,"item":item,"status":status,"note":note,"approved_at":datetime.utcnow().isoformat()+"Z" if status=="APPROVED" else "","created_at":datetime.utcnow().isoformat()+"Z"}
+    _json_save(APPROVALS_FILE,data); _audit("approval_saved", {"approval_id":aid,"status":status})
+    return RedirectResponse(url=f"/approvals?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/dispatch", response_class=HTMLResponse)
+async def dispatch_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(DISPATCH_FILE,{})
+    rows="".join(f"<tr><td>{_safe_html(d.get('dispatch_id'))}</td><td>{_safe_html(d.get('order_id'))}</td><td>{_safe_html(d.get('courier'))}</td><td>{_safe_html(d.get('tracking_no'))}</td><td>{_safe_html(d.get('status'))}</td><td>{_safe_html(d.get('proof_url'))}</td></tr>" for d in data.values()) or "<tr><td colspan='6'>No dispatch records.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Dispatch Tracking v4.9</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/dispatch/save?key={_safe_html(DASHBOARD_KEY)}'><input name='order_id' placeholder='Order ID'><input name='courier' placeholder='Courier'><input name='tracking_no' placeholder='Tracking no'><select name='status'><option>PACKING</option><option>DISPATCHED</option><option>IN_TRANSIT</option><option>DELIVERED</option></select><input name='proof_url' placeholder='Proof URL'><button>Save Dispatch</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>ID</th><th>Order</th><th>Courier</th><th>Tracking</th><th>Status</th><th>Proof</th></tr>{rows}</table></body></html>""")
+
+@app.post("/dispatch/save")
+async def save_dispatch(key: str = "", order_id: str = Form(""), courier: str = Form(""), tracking_no: str = Form(""), status: str = Form("PACKING"), proof_url: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(DISPATCH_FILE,{}); did=_now_id("DSP")
+    data[did]={"dispatch_id":did,"order_id":order_id,"courier":courier,"tracking_no":tracking_no,"status":status,"proof_url":proof_url,"updated_at":datetime.utcnow().isoformat()+"Z"}
+    _json_save(DISPATCH_FILE,data); _audit("dispatch_saved", {"dispatch_id":did})
+    return RedirectResponse(url=f"/dispatch?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/delivery-proof", response_class=HTMLResponse)
+async def delivery_proof_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(DISPATCH_FILE,{})
+    rows="".join(f"<tr><td>{_safe_html(d.get('order_id'))}</td><td>{_safe_html(d.get('status'))}</td><td>{_safe_html(d.get('proof_url'))}</td><td>{_safe_html(d.get('tracking_no'))}</td></tr>" for d in data.values() if d.get('proof_url') or d.get('status')=='DELIVERED') or "<tr><td colspan='4'>No delivery proof yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Delivery Proof v5.0</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Order</th><th>Status</th><th>Proof URL</th><th>Tracking</th></tr>{rows}</table></body></html>""")
+
+
+@app.get("/payment-reminders", response_class=HTMLResponse)
+async def payment_reminders_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(PAYMENT_REMINDERS_FILE,{})
+    rows="".join(f"<tr><td>{_safe_html(p.get('customer_phone'))}</td><td>₹{_money(p.get('amount')):,.0f}</td><td>{_safe_html(p.get('due_date'))}</td><td>{_safe_html(p.get('status'))}</td><td>{_safe_html(p.get('note'))}</td></tr>" for p in data.values()) or "<tr><td colspan='5'>No payment reminders.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Payment Reminders v5.1</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/payment-reminders/save?key={_safe_html(DASHBOARD_KEY)}'><input name='customer_phone' placeholder='Phone'><input name='amount' placeholder='Amount'><input type='date' name='due_date'><select name='status'><option>PENDING</option><option>REMINDED</option><option>PAID</option></select><input name='note' placeholder='Note'><button>Save</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Phone</th><th>Amount</th><th>Due Date</th><th>Status</th><th>Note</th></tr>{rows}</table></body></html>""")
+
+@app.post("/payment-reminders/save")
+async def save_payment_reminder(key: str = "", customer_phone: str = Form(""), amount: str = Form(""), due_date: str = Form(""), status: str = Form("PENDING"), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(PAYMENT_REMINDERS_FILE,{}); pid=_now_id("PAYREM")
+    data[pid]={"reminder_id":pid,"customer_phone":customer_phone,"amount":_money(amount),"due_date":due_date,"status":status,"note":note,"created_at":datetime.utcnow().isoformat()+"Z"}
+    _json_save(PAYMENT_REMINDERS_FILE,data); _audit("payment_reminder_saved", {"reminder_id":pid})
+    return RedirectResponse(url=f"/payment-reminders?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/broadcast-queue", response_class=HTMLResponse)
+async def broadcast_queue_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(BROADCAST_QUEUE_FILE,{})
+    rows="".join(f"<tr><td>{_safe_html(b.get('audience'))}</td><td>{_safe_html(b.get('status'))}</td><td>{_safe_html(b.get('scheduled_date'))}</td><td>{_safe_html(b.get('message'))}</td></tr>" for b in data.values()) or "<tr><td colspan='4'>No broadcast drafts.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Broadcast Queue v5.2</h1><p><b>Safe mode:</b> This only saves broadcast drafts. It does not auto-send bulk WhatsApp messages.</p><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/broadcast-queue/save?key={_safe_html(DASHBOARD_KEY)}'><input name='audience' placeholder='Wholesalers / Retailers'><input type='date' name='scheduled_date'><select name='status'><option>DRAFT</option><option>READY</option><option>SENT_MANUALLY</option></select><input name='message' placeholder='Message'><button>Save Draft</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Audience</th><th>Status</th><th>Date</th><th>Message</th></tr>{rows}</table></body></html>""")
+
+@app.post("/broadcast-queue/save")
+async def save_broadcast_queue(key: str = "", audience: str = Form(""), scheduled_date: str = Form(""), status: str = Form("DRAFT"), message: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(BROADCAST_QUEUE_FILE,{}); bid=_now_id("BRC")
+    data[bid]={"broadcast_id":bid,"audience":audience,"scheduled_date":scheduled_date,"status":status,"message":message,"created_at":datetime.utcnow().isoformat()+"Z"}
+    _json_save(BROADCAST_QUEUE_FILE,data); _audit("broadcast_draft_saved", {"broadcast_id":bid})
+    return RedirectResponse(url=f"/broadcast-queue?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/data-export")
+async def data_export(key: str = ""):
+    if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    bundle = {
+        "exported_at": datetime.utcnow().isoformat()+"Z", "version": "5.5.0",
+        "customers": _load_customers(), "documents": _json_load(DOCUMENTS_FILE, {}),
+        "design_requests": _json_load(DESIGN_REQUESTS_FILE, {}), "approvals": _json_load(APPROVALS_FILE, {}),
+        "dispatch": _json_load(DISPATCH_FILE, {}), "payment_reminders": _json_load(PAYMENT_REMINDERS_FILE, {}),
+        "broadcast_queue": _json_load(BROADCAST_QUEUE_FILE, {}),
+    }
+    return JSONResponse(content=bundle)
+
+
+@app.get("/audit", response_class=HTMLResponse)
+async def audit_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data=_json_load(AUDIT_FILE, [])[-300:]
+    rows="".join(f"<tr><td>{_safe_html(a.get('time'))}</td><td>{_safe_html(a.get('action'))}</td><td>{_safe_html(a.get('detail'))}</td></tr>" for a in data[::-1]) or "<tr><td colspan='3'>No audit yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Audit Log v5.4</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Time</th><th>Action</th><th>Detail</th></tr>{rows}</table></body></html>""")
+
+
+@app.get("/system-status", response_class=HTMLResponse)
+async def system_status_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    checks = [("Messages", MESSAGES_FILE), ("Sessions", SESSIONS_FILE), ("Customers", CUSTOMERS_FILE), ("Documents", DOCUMENTS_FILE), ("Design Requests", DESIGN_REQUESTS_FILE), ("Approvals", APPROVALS_FILE), ("Dispatch", DISPATCH_FILE), ("Audit", AUDIT_FILE)]
+    rows=""
+    for name,path in checks:
+        exists=os.path.exists(path); size=os.path.getsize(path) if exists else 0
+        rows += f"<tr><td>{_safe_html(name)}</td><td>{_safe_html(path)}</td><td>{'OK' if exists else 'NEW'}</td><td>{size}</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>System Status v5.5</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Module</th><th>File</th><th>Status</th><th>Size Bytes</th></tr>{rows}</table></body></html>""")
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "4.5.0",
+        "version": "5.5.0",
         "status":  "running",
     }
