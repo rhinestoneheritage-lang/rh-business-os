@@ -21,6 +21,7 @@ import os
 import csv
 import io
 import zipfile
+import asyncio
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -100,6 +101,10 @@ MESSAGES_FILE   = os.getenv("MESSAGES_FILE", "data/messages.json")
 SESSIONS_FILE   = os.getenv("SESSIONS_FILE", "data/sessions.json")
 CUSTOMERS_FILE  = os.getenv("CUSTOMERS_FILE", "data/customers.json")
 DASHBOARD_KEY  = os.getenv("DASHBOARD_KEY", "RH2026")
+BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
+AUTO_BACKUP_ENABLED = os.getenv("AUTO_BACKUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+AUTO_BACKUP_INTERVAL_HOURS = int(os.getenv("AUTO_BACKUP_INTERVAL_HOURS", "6"))
+BACKUP_KEEP_LAST = int(os.getenv("BACKUP_KEEP_LAST", "30"))
 ASSIGNEES = [name.strip() for name in os.getenv("CRM_ASSIGNEES", "Shifa,Hasan,Awais,Aquib").split(",") if name.strip()]
 PIPELINE_STAGES = ["NEW", "CONTACTED", "QUALIFIED", "QUOTE_PENDING", "QUOTE_SENT", "SAMPLE", "ORDER_CONFIRMED", "DISPATCHED", "CLOSED", "LOST"]
 TASK_STATUSES = ["OPEN", "IN_PROGRESS", "DONE"]
@@ -713,7 +718,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}.bottom-status{{grid-template-columns:repeat(2,1fr)}}}} @media(max-width:760px){{.app{{grid-template-columns:1fr}}.sidebar{{position:relative;height:auto}}.pro,.version{{display:none}}.topbar{{flex-direction:column;align-items:stretch}}.search-input{{width:100%}}.kpis{{grid-template-columns:1fr}}table{{display:block;overflow-x:auto}}}}
     </style></head><body><div class='app'><aside class='sidebar'><div class='brand'><div class='logo'>RH</div><div><h2>OREIUM</h2><small>BUSINESS OS</small></div></div>
     <a class='nav active' href='/dashboard?key={esc(DASHBOARD_KEY)}'><span>⌂</span>Dashboard</a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=followup_today'><span>☘</span>WhatsApp <b style='margin-left:auto;background:#7C3AED;padding:2px 8px;border-radius:999px;'>{today_followups}</b></a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified'><span>♙</span>CRM</a><a class='nav' href='/quotes?key={esc(DASHBOARD_KEY)}'><span>▾</span>Sales</a><a class='nav' href='/production?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Production</a><a class='nav' href='/inventory?key={esc(DASHBOARD_KEY)}'><span>□</span>Inventory</a><a class='nav' href='/staff?key={esc(DASHBOARD_KEY)}'><span>♧</span>HR</a><a class='nav' href='/reports?key={esc(DASHBOARD_KEY)}'><span>▥</span>Reports</a><a class='nav' href='/settings?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Settings</a>
-    <div class='pro'><div style='font-size:28px;'>♛</div><b>OREIUM PRO</b><p style='color:#9CA3AF;font-size:13px;'>Premium business dashboard</p><a class='btn primary' href='/system?key={esc(DASHBOARD_KEY)}'>System Center</a></div><div class='version'>v10.2.0 | Unified Premium UI</div></aside>
+    <div class='pro'><div style='font-size:28px;'>♛</div><b>OREIUM PRO</b><p style='color:#9CA3AF;font-size:13px;'>Premium business dashboard</p><a class='btn primary' href='/system?key={esc(DASHBOARD_KEY)}'>System Center</a></div><div class='version'>v10.4.0 | Auto Backup UI</div></aside>
     <main class='main'><div class='topbar'><div><h1>Welcome back, Admin 👋</h1><div class='subtitle'>Here is what is happening in your business today.</div></div><div class='searchbar'><form method='get' action='/dashboard' style='display:flex;gap:10px;'><input type='hidden' name='key' value='{esc(DASHBOARD_KEY)}'><input type='hidden' name='filter' value='{esc(filter)}'><input class='search-input' name='q' value='{esc(q)}' placeholder='Search phone, status, message...'><button class='btn primary' type='submit'>Search</button></form><a class='btn' href='/dashboard/export?key={esc(DASHBOARD_KEY)}'>CSV</a></div></div>
     <section class='kpis'>{kpi('Total Leads', total, '₹', 'purple', '+18.6% vs last 7 days')}{kpi('New Leads', total, '👥', 'blue', str(wholesalers)+' wholesalers')}{kpi('Orders', order_confirmed, '🛍', 'green', 'Confirmed pipeline')}{kpi('Follow-ups', today_followups + missed_followups, '⏱', 'orange', str(missed_followups)+' missed')}{kpi('Pending Tasks', open_tasks, '☑', 'pink', 'Team work queue')}</section>
     <section class='grid'><div class='panel'><div class='panel-head'><h3>Business Overview</h3><a class='view' href='/reports?key={esc(DASHBOARD_KEY)}'>View Reports</a></div><div class='chart'></div></div><div class='panel'><div class='panel-head'><h3>Recent Activities</h3><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}'>View All</a></div>{recent_html}</div><div class='panel'><div class='panel-head'><h3>Pipeline Overview</h3></div><div class='donut'><div class='donut-inner'><span>Total Deals</span><b>{total}</b></div></div><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified' style='display:block;text-align:center;'>View Full Pipeline →</a></div></section>
@@ -1333,33 +1338,269 @@ async def team_dashboard(key: str = ""):
     """)
 
 
-# ── v2.5 Backup & Restore ────────────────────────────────────────────────────
+# ── v10.4 Automatic Backup Center ─────────────────────────────────────────────
+def _backup_source_files() -> list[tuple[str, str]]:
+    """All important JSON files that should be protected in local backups."""
+    candidates = [
+        (CUSTOMERS_FILE, "data/customers.json"),
+        (SESSIONS_FILE, "data/sessions.json"),
+        (MESSAGES_FILE, "data/messages.json"),
+        (DOCUMENTS_FILE, "data/documents.json"),
+        (DESIGN_REQUESTS_FILE, "data/design_requests.json"),
+        (APPROVALS_FILE, "data/approvals.json"),
+        (DISPATCH_FILE, "data/dispatch.json"),
+        (PAYMENT_REMINDERS_FILE, "data/payment_reminders.json"),
+        (BROADCAST_QUEUE_FILE, "data/broadcast_queue.json"),
+        (AUDIT_FILE, "data/audit.json"),
+        (os.getenv("QUOTES_FILE", "data/quotes.json"), "data/quotes.json"),
+        (os.getenv("ORDERS_FILE", "data/orders.json"), "data/orders.json"),
+        (os.getenv("INVENTORY_FILE", "data/inventory.json"), "data/inventory.json"),
+        (os.getenv("STAFF_FILE", "data/staff.json"), "data/staff.json"),
+        (PRICE_LIST_FILE if "PRICE_LIST_FILE" in globals() else os.getenv("PRICE_LIST_FILE", "data/price_list.json"), "data/price_list.json"),
+    ]
+    seen = set()
+    out = []
+    for path, arc in candidates:
+        if path and path not in seen:
+            seen.add(path)
+            out.append((path, arc))
+    return out
+
+
+def _list_backup_files() -> list[dict]:
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    rows = []
+    for name in os.listdir(BACKUP_DIR):
+        if not name.endswith(".zip"):
+            continue
+        path = os.path.join(BACKUP_DIR, name)
+        try:
+            stat = os.stat(path)
+            rows.append({
+                "name": name,
+                "path": path,
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                "size_bytes": stat.st_size,
+            })
+        except Exception:
+            pass
+    return sorted(rows, key=lambda x: x["created_at"], reverse=True)
+
+
+def _human_size(num: int) -> str:
+    for unit in ["B", "KB", "MB", "GB"]:
+        if num < 1024:
+            return f"{num:.1f} {unit}" if unit != "B" else f"{num} {unit}"
+        num /= 1024
+    return f"{num:.1f} TB"
+
+
+def _create_backup(reason: str = "manual") -> str:
+    """Create a local ZIP backup and return its path."""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    now = datetime.utcnow()
+    filename = f"rh_backup_{now.strftime('%Y%m%d_%H%M%S')}_{reason}.zip"
+    backup_path = os.path.join(BACKUP_DIR, filename)
+    with zipfile.ZipFile(backup_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        included = []
+        for path, arc in _backup_source_files():
+            if os.path.exists(path):
+                zf.write(path, arc)
+                included.append(arc)
+            else:
+                # Create safe empty placeholders so restore always has valid JSON.
+                zf.writestr(arc, "[]" if arc.endswith("messages.json") or arc.endswith("audit.json") else "{}")
+                included.append(arc)
+        zf.writestr("backup_info.json", json.dumps({
+            "created_at": now.isoformat() + "Z",
+            "version": "10.4.0",
+            "reason": reason,
+            "included_files": included,
+        }, indent=2))
+    _cleanup_old_backups()
+    logger.info("✅ Backup created | %s", backup_path)
+    return backup_path
+
+
+def _cleanup_old_backups() -> None:
+    backups = _list_backup_files()
+    for item in backups[BACKUP_KEEP_LAST:]:
+        try:
+            os.remove(item["path"])
+            logger.info("🗑 Old backup deleted | %s", item["path"])
+        except Exception as exc:
+            logger.warning("Could not delete old backup %s: %s", item["path"], exc)
+
+
+def _latest_backup_age_hours() -> float | None:
+    backups = _list_backup_files()
+    if not backups:
+        return None
+    latest_path = backups[0]["path"]
+    try:
+        mtime = os.path.getmtime(latest_path)
+        return (datetime.now().timestamp() - mtime) / 3600
+    except Exception:
+        return None
+
+
+async def _auto_backup_loop() -> None:
+    """Background automatic backup loop. Runs while server is active."""
+    if not AUTO_BACKUP_ENABLED:
+        logger.info("Auto backup disabled by env AUTO_BACKUP_ENABLED=false")
+        return
+    interval_seconds = max(1, AUTO_BACKUP_INTERVAL_HOURS) * 3600
+    await asyncio.sleep(5)
+    while True:
+        try:
+            age = _latest_backup_age_hours()
+            if age is None or age >= AUTO_BACKUP_INTERVAL_HOURS:
+                _create_backup("auto")
+        except Exception as exc:
+            logger.exception("Auto backup failed: %s", exc)
+        await asyncio.sleep(interval_seconds)
+
+
+@app.on_event("startup")
+async def start_auto_backup_service():
+    asyncio.create_task(_auto_backup_loop())
+
+
 @app.get("/backup", response_class=HTMLResponse)
 async def backup_page(key: str = ""):
     if key != DASHBOARD_KEY:
         return HTMLResponse(content="Access Denied", status_code=401)
     def esc(value):
         return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    backups = _list_backup_files()
+    latest = backups[0] if backups else None
+    latest_text = f"{esc(latest['name'])} • {esc(latest['created_at'])} • {_human_size(latest['size_bytes'])}" if latest else "No backup yet"
+    status = "ON" if AUTO_BACKUP_ENABLED else "OFF"
+    rows = ""
+    for b in backups[:50]:
+        rows += f"""
+        <tr>
+            <td>{esc(b['name'])}</td>
+            <td>{esc(b['created_at'])}</td>
+            <td>{_human_size(b['size_bytes'])}</td>
+            <td>
+                <a class='btn' href='/backup/file/{esc(b['name'])}?key={esc(DASHBOARD_KEY)}'>Download</a>
+                <form method='post' action='/backup/restore-zip?key={esc(DASHBOARD_KEY)}' style='display:inline'>
+                    <input type='hidden' name='filename' value='{esc(b['name'])}'>
+                    <button type='submit' onclick="return confirm('Restore this backup? Current data will be saved before restore.')">Restore</button>
+                </form>
+            </td>
+        </tr>
+        """
+    if not rows:
+        rows = "<tr><td colspan='4' style='text-align:center;padding:24px;color:#9CA3AF'>No backups created yet.</td></tr>"
+
     return HTMLResponse(content=f"""
-    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Backup & Restore</title>
-    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .card{{background:white;padding:20px;border-radius:14px;border:1px solid #e5e5e5;max-width:700px}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer}} input{{padding:12px;border:1px solid #ddd;border-radius:10px}}</style></head>
-    <body><div class='card'><h1>Backup & Restore</h1><p>Download full JSON backup of customers, sessions and messages.</p><p><a class='btn' href='/backup/download?key={esc(DASHBOARD_KEY)}'>Download Backup ZIP</a> <a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a></p><hr><h3>Restore customers.json only</h3><p style='color:#777'>Safety: restore only replaces customers.json. Sessions/messages remain safe.</p><form method='post' enctype='multipart/form-data' action='/backup/restore-customers?key={esc(DASHBOARD_KEY)}'><input type='file' name='file' accept='.json' required> <button type='submit'>Restore Customers</button></form></div></body></html>
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Backup Center</title>
+    <style>
+        body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}}
+        .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:18px 0}} .card{{background:white;padding:18px;border-radius:14px;border:1px solid #e5e5e5}}
+        a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer;font-weight:700}} input{{padding:12px;border:1px solid #ddd;border-radius:10px}}
+        table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}
+        .muted{{color:#777}}
+    </style></head>
+    <body>
+        <div class='top'><div><h1>Backup Center</h1><p class='muted'>Automatic local backup for CRM JSON data.</p></div><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back to Dashboard</a></div>
+        <div class='grid'>
+            <div class='card'><h3>Auto Backup</h3><h2>{status}</h2><p class='muted'>Every {AUTO_BACKUP_INTERVAL_HOURS} hours</p></div>
+            <div class='card'><h3>Latest Backup</h3><p>{latest_text}</p></div>
+            <div class='card'><h3>Backup Folder</h3><p>{esc(BACKUP_DIR)}</p><p class='muted'>Keeping last {BACKUP_KEEP_LAST} backups</p></div>
+        </div>
+        <p>
+            <a class='btn' href='/backup/create?key={esc(DASHBOARD_KEY)}'>Backup Now</a>
+            <a class='btn' href='/backup/download?key={esc(DASHBOARD_KEY)}'>Download Fresh ZIP</a>
+        </p>
+        <div class='card'>
+            <h2>Backup History</h2>
+            <table><thead><tr><th>Backup File</th><th>Created</th><th>Size</th><th>Action</th></tr></thead><tbody>{rows}</tbody></table>
+        </div>
+        <div class='card' style='margin-top:16px'>
+            <h2>Upload & Restore ZIP</h2>
+            <p class='muted'>Restore a ZIP created by Backup Center. Current files will be backed up first automatically.</p>
+            <form method='post' enctype='multipart/form-data' action='/backup/upload-restore?key={esc(DASHBOARD_KEY)}'>
+                <input type='file' name='file' accept='.zip' required> <button type='submit'>Upload Restore ZIP</button>
+            </form>
+        </div>
+    </body></html>
     """)
+
+
+@app.get("/backup/create")
+async def create_backup_now(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    _create_backup("manual")
+    return RedirectResponse(url=f"/backup?key={DASHBOARD_KEY}", status_code=303)
+
 
 @app.get("/backup/download")
 async def download_backup(key: str = ""):
     if key != DASHBOARD_KEY:
         return JSONResponse(content={"error":"Access denied"}, status_code=401)
-    mem = io.BytesIO()
-    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path, arc in [(CUSTOMERS_FILE, "customers.json"), (SESSIONS_FILE, "sessions.json"), (MESSAGES_FILE, "messages.json")]:
-            if os.path.exists(path):
-                zf.write(path, arc)
-            else:
-                zf.writestr(arc, "{}" if arc != "messages.json" else "[]")
-        zf.writestr("backup_info.json", json.dumps({"created_at": datetime.utcnow().isoformat()+"Z", "version":"2.5.0"}, indent=2))
-    mem.seek(0)
-    return StreamingResponse(mem, media_type="application/zip", headers={"Content-Disposition":"attachment; filename=rh_business_os_backup_v19.zip"})
+    path = _create_backup("download")
+    f = open(path, "rb")
+    return StreamingResponse(f, media_type="application/zip", headers={"Content-Disposition":f"attachment; filename={os.path.basename(path)}"})
+
+
+@app.get("/backup/file/{filename}")
+async def download_backup_file(filename: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    safe_name = os.path.basename(filename)
+    path = os.path.join(BACKUP_DIR, safe_name)
+    if not os.path.exists(path) or not safe_name.endswith(".zip"):
+        return HTMLResponse(content="Backup not found", status_code=404)
+    return StreamingResponse(open(path, "rb"), media_type="application/zip", headers={"Content-Disposition":f"attachment; filename={safe_name}"})
+
+
+def _restore_zip_file(zip_bytes: bytes) -> None:
+    # safety backup before restore
+    _create_backup("before_restore")
+    os.makedirs("data", exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+        for path, arc in _backup_source_files():
+            if arc in zf.namelist():
+                raw = zf.read(arc)
+                # Validate JSON before writing.
+                json.loads(raw.decode("utf-8"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as out:
+                    out.write(raw)
+
+
+@app.post("/backup/restore-zip")
+async def restore_zip_from_history(key: str = "", filename: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    safe_name = os.path.basename(filename)
+    path = os.path.join(BACKUP_DIR, safe_name)
+    if not os.path.exists(path):
+        return HTMLResponse(content="Backup file not found", status_code=404)
+    try:
+        with open(path, "rb") as f:
+            _restore_zip_file(f.read())
+    except Exception as exc:
+        return HTMLResponse(content=f"Restore failed: {exc}", status_code=400)
+    return RedirectResponse(url=f"/dashboard?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/backup/upload-restore")
+async def upload_restore_backup(key: str = "", file: UploadFile = File(...)):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    raw = await file.read()
+    try:
+        _restore_zip_file(raw)
+    except Exception as exc:
+        return HTMLResponse(content=f"Restore failed: {exc}", status_code=400)
+    return RedirectResponse(url=f"/dashboard?key={DASHBOARD_KEY}", status_code=303)
+
 
 @app.post("/backup/restore-customers")
 async def restore_customers_backup(key: str = "", file: UploadFile = File(...)):
@@ -1372,15 +1613,11 @@ async def restore_customers_backup(key: str = "", file: UploadFile = File(...)):
             raise ValueError("customers.json must be an object keyed by phone number")
     except Exception as exc:
         return HTMLResponse(content=f"Invalid JSON backup: {exc}", status_code=400)
+    _create_backup("before_customers_restore")
     os.makedirs(os.path.dirname(CUSTOMERS_FILE), exist_ok=True)
-    if os.path.exists(CUSTOMERS_FILE):
-        safety = CUSTOMERS_FILE + ".before_restore_" + datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        with open(CUSTOMERS_FILE, "rb") as src, open(safety, "wb") as dst:
-            dst.write(src.read())
     with open(CUSTOMERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     return RedirectResponse(url=f"/dashboard?key={DASHBOARD_KEY}", status_code=303)
-
 
 
 # ── v2.0 to v2.5 Quotation System ────────────────────────────────────────────
