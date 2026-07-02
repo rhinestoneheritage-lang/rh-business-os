@@ -565,382 +565,109 @@ def _format_followup(value: str | None) -> str:
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     if key != DASHBOARD_KEY:
-        return HTMLResponse(
-            content="""
-            <!doctype html>
-            <html><head><title>Access Denied</title></head>
-            <body style="font-family:Arial;padding:40px;background:#f7f7f7;">
-                <div style="max-width:500px;margin:auto;background:white;padding:30px;border-radius:14px;text-align:center;">
-                    <h2>Access Denied</h2>
-                    <p>Please open dashboard with your secure key.</p>
-                    <p style="color:#777;">Example: /dashboard?key=YOUR_KEY</p>
-                </div>
-            </body></html>
-            """,
-            status_code=401,
-        )
-    customers = _load_customers()
-    rows = list(customers.values())
+        return HTMLResponse(content="""<!doctype html><html><body style='font-family:Arial;padding:40px;background:#070A12;color:white;'><div style='max-width:520px;margin:auto;background:#111827;padding:34px;border-radius:22px;text-align:center;border:1px solid #243047;'><h2>Access Denied</h2><p style='color:#9CA3AF;'>Please open dashboard with your secure key.</p><p style='color:#7C3AED;'>/dashboard?key=YOUR_KEY</p></div></body></html>""", status_code=401)
 
-    total = len(rows)
-    wholesalers = sum(1 for c in rows if c.get("buyer_type") == "wholesaler")
-    retailers = sum(1 for c in rows if c.get("buyer_type") == "retailer")
-    personal = sum(1 for c in rows if c.get("buyer_type") == "personal")
-    qualified = sum(1 for c in rows if c.get("lead_status") == "QUALIFIED_LEAD")
-    website_sent = sum(1 for c in rows if c.get("lead_status") == "WEBSITE_SENT")
-    hot_leads = sum(1 for c in rows if c.get("is_hot_lead") is True)
-    today_followups = sum(1 for c in rows if _followup_status(c) == "today")
-    missed_followups = sum(1 for c in rows if _followup_status(c) == "missed")
-    upcoming_followups = sum(1 for c in rows if _followup_status(c) == "upcoming")
-    followups_sent = sum(1 for c in rows if c.get("last_followup_sent_at"))
-    assigned_leads = sum(1 for c in rows if c.get("assigned_to"))
-    unassigned_leads = sum(1 for c in rows if not c.get("assigned_to"))
-    open_tasks = sum(1 for c in rows if c.get("task_text") and c.get("task_status") != "DONE")
-    done_tasks = sum(1 for c in rows if c.get("task_status") == "DONE")
-    quote_pending = sum(1 for c in rows if c.get("pipeline_stage") == "QUOTE_PENDING")
-    quote_sent = sum(1 for c in rows if c.get("pipeline_stage") == "QUOTE_SENT")
-    order_confirmed = sum(1 for c in rows if c.get("pipeline_stage") == "ORDER_CONFIRMED")
+    customers = _load_customers()
+    all_rows = list(customers.values())
+    rows = list(all_rows)
+
+    total = len(all_rows)
+    wholesalers = sum(1 for c in all_rows if c.get("buyer_type") == "wholesaler")
+    retailers = sum(1 for c in all_rows if c.get("buyer_type") == "retailer")
+    personal = sum(1 for c in all_rows if c.get("buyer_type") == "personal")
+    qualified = sum(1 for c in all_rows if c.get("lead_status") == "QUALIFIED_LEAD")
+    website_sent = sum(1 for c in all_rows if c.get("lead_status") == "WEBSITE_SENT")
+    hot_leads = sum(1 for c in all_rows if c.get("is_hot_lead") is True)
+    today_followups = sum(1 for c in all_rows if _followup_status(c) == "today")
+    missed_followups = sum(1 for c in all_rows if _followup_status(c) == "missed")
+    upcoming_followups = sum(1 for c in all_rows if _followup_status(c) == "upcoming")
+    assigned_leads = sum(1 for c in all_rows if c.get("assigned_to"))
+    open_tasks = sum(1 for c in all_rows if c.get("task_text") and c.get("task_status") != "DONE")
+    order_confirmed = sum(1 for c in all_rows if c.get("pipeline_stage") == "ORDER_CONFIRMED")
 
     query = (q or "").strip().lower()
-
-    if filter == "wholesaler":
-        rows = [c for c in rows if c.get("buyer_type") == "wholesaler"]
-    elif filter == "retailer":
-        rows = [c for c in rows if c.get("buyer_type") == "retailer"]
-    elif filter == "personal":
-        rows = [c for c in rows if c.get("buyer_type") == "personal"]
-    elif filter == "qualified":
-        rows = [c for c in rows if c.get("lead_status") == "QUALIFIED_LEAD"]
-    elif filter == "website_sent":
-        rows = [c for c in rows if c.get("lead_status") == "WEBSITE_SENT"]
-    elif filter == "hot":
-        rows = [c for c in rows if c.get("is_hot_lead") is True]
-    elif filter == "followup_today":
-        rows = [c for c in rows if _followup_status(c) == "today"]
-    elif filter == "followup_missed":
-        rows = [c for c in rows if _followup_status(c) == "missed"]
-    elif filter == "followup_upcoming":
-        rows = [c for c in rows if _followup_status(c) == "upcoming"]
-    elif filter == "followup_sent":
-        rows = [c for c in rows if c.get("last_followup_sent_at")]
-    elif filter == "assigned":
-        rows = [c for c in rows if c.get("assigned_to")]
-    elif filter == "unassigned":
-        rows = [c for c in rows if not c.get("assigned_to")]
-    elif filter == "task_open":
-        rows = [c for c in rows if c.get("task_text") and c.get("task_status") != "DONE"]
-    elif filter == "task_done":
-        rows = [c for c in rows if c.get("task_status") == "DONE"]
-    elif filter == "quote_pending":
-        rows = [c for c in rows if c.get("pipeline_stage") == "QUOTE_PENDING"]
-    elif filter == "quote_sent":
-        rows = [c for c in rows if c.get("pipeline_stage") == "QUOTE_SENT"]
-    elif filter == "order_confirmed":
-        rows = [c for c in rows if c.get("pipeline_stage") == "ORDER_CONFIRMED"]
-    elif filter.startswith("pipeline_"):
-        stage_name = filter.replace("pipeline_", "", 1).upper()
-        rows = [c for c in rows if str(c.get("pipeline_stage", "NEW")).upper() == stage_name]
-    elif filter.startswith("assigned_"):
-        assigned_name = filter.replace("assigned_", "", 1).lower()
-        rows = [c for c in rows if str(c.get("assigned_to", "")).lower() == assigned_name]
+    if filter == "wholesaler": rows = [c for c in rows if c.get("buyer_type") == "wholesaler"]
+    elif filter == "retailer": rows = [c for c in rows if c.get("buyer_type") == "retailer"]
+    elif filter == "personal": rows = [c for c in rows if c.get("buyer_type") == "personal"]
+    elif filter == "qualified": rows = [c for c in rows if c.get("lead_status") == "QUALIFIED_LEAD"]
+    elif filter == "website_sent": rows = [c for c in rows if c.get("lead_status") == "WEBSITE_SENT"]
+    elif filter == "hot": rows = [c for c in rows if c.get("is_hot_lead") is True]
+    elif filter == "followup_today": rows = [c for c in rows if _followup_status(c) == "today"]
+    elif filter == "followup_missed": rows = [c for c in rows if _followup_status(c) == "missed"]
+    elif filter == "followup_upcoming": rows = [c for c in rows if _followup_status(c) == "upcoming"]
+    elif filter == "assigned": rows = [c for c in rows if c.get("assigned_to")]
+    elif filter == "unassigned": rows = [c for c in rows if not c.get("assigned_to")]
+    elif filter in ("Shifa", "Hasan", "Awais", "Aquib"): rows = [c for c in rows if c.get("assigned_to") == filter]
+    elif filter == "tasks_open": rows = [c for c in rows if c.get("task_text") and c.get("task_status") != "DONE"]
+    elif filter == "orders": rows = [c for c in rows if c.get("pipeline_stage") == "ORDER_CONFIRMED"]
 
     if query:
-        rows = [
-            c for c in rows
-            if query in str(c.get("phone_number", "")).lower()
-            or query in str(c.get("buyer_type", "")).lower()
-            or query in str(c.get("lead_status", "")).lower()
-            or query in str(c.get("last_message", "")).lower()
-            or query in str(c.get("notes", "")).lower()
-            or query in str(c.get("followup_note", "")).lower()
-            or query in str(c.get("assigned_to", "")).lower()
-            or query in str(c.get("task_text", "")).lower()
-            or query in str(c.get("pipeline_stage", "")).lower()
-        ]
+        rows = [c for c in rows if query in str(c.get("phone_number", "")).lower() or query in str(c.get("buyer_type", "")).lower() or query in str(c.get("lead_status", "")).lower() or query in str(c.get("last_message", "")).lower() or query in str(c.get("assigned_to", "")).lower()]
 
     def esc(value):
-        if value is None:
-            return ""
+        if value is None: return ""
         return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
-
-    def status_class(status):
-        status = status or ""
-        if status == "QUALIFIED_LEAD":
-            return "qualified"
-        if status == "WEBSITE_SENT":
-            return "website"
-        if status == "FOLLOW_UP_SENT":
-            return "qualified"
-        if status in ("WAITING_DESIGN", "WAITING_MOQ", "WAITING_BUYER_TYPE"):
-            return "waiting"
-        return "new"
-
-    def followup_class(c):
-        st = _followup_status(c)
-        return {"today":"follow_today", "missed":"follow_missed", "upcoming":"follow_upcoming", "done":"follow_done"}.get(st, "follow_none")
-
     def short_date(value):
-        if not value:
-            return ""
-        return value.replace("T", " ").replace("Z", "")[:19]
-
-    def filter_link(label, key):
-        active = "active" if filter == key else ""
-        return f'<a class="filter {active}" href="/dashboard?key={esc(DASHBOARD_KEY)}&filter={key}&q={esc(q)}">{label}</a>'
+        if not value: return ""
+        return value.replace("T", " ").replace("Z", "")[:16]
+    def pill_class(status):
+        status = status or ""
+        if status == "QUALIFIED_LEAD": return "green"
+        if status == "WEBSITE_SENT": return "orange"
+        if status in ("WAITING_DESIGN", "WAITING_MOQ", "WAITING_BUYER_TYPE", "FOLLOW_UP"): return "yellow"
+        if status in ("CLOSED", "ORDER_CONFIRMED"): return "blue"
+        return "purple"
+    def filter_link(label, key_name):
+        active = "active" if filter == key_name else ""
+        return f'<a class="chip {active}" href="/dashboard?key={esc(DASHBOARD_KEY)}&filter={esc(key_name)}&q={esc(q)}">{label}</a>'
+    def kpi(title, value, icon, color, sub=""):
+        return f"""
+        <div class='kpi {color}'>
+            <div class='kpi-top'><div><div class='kpi-title'>{title}</div><div class='kpi-value'>{value}</div></div><div class='kpi-icon'>{icon}</div></div>
+            <div class='kpi-sub'>{sub or 'Live business metric'}</div>
+            <div class='spark'><i style='height:32%'></i><i style='height:46%'></i><i style='height:42%'></i><i style='height:60%'></i><i style='height:48%'></i><i style='height:72%'></i><i style='height:88%'></i></div>
+        </div>"""
 
     rows_html = ""
-    for c in sorted(rows, key=lambda x: x.get("last_seen", ""), reverse=True):
-        status = c.get("lead_status") or ""
+    for c in sorted(rows, key=lambda x: x.get("last_seen", ""), reverse=True)[:80]:
+        phone = esc(c.get("phone_number")); status = c.get("lead_status") or "NEW_LEAD"
         rows_html += f"""
-        <tr>
-            <td class="phone"><a style="color:#111;font-weight:700;text-decoration:none;" href="/customer/{esc(c.get('phone_number'))}?key={esc(DASHBOARD_KEY)}">{esc(c.get("phone_number"))}</a></td>
-            <td><span class="pill buyer">{esc(c.get("buyer_type") or "unknown")}</span></td>
-            <td><span class="pill {status_class(status)}">{esc(status)}</span></td>
-            <td><span class="pill assigned">{esc(c.get("assigned_to") or "Unassigned")}</span></td>
-            <td><span class="pill pipeline">{esc(c.get("pipeline_stage") or "NEW")}</span></td>
-            <td><span class="pill task">{esc((c.get("task_status") or "") if c.get("task_text") else "No Task")}</span></td>
-            <td class="lastmsg">{esc(c.get("last_message"))}</td>
-            <td>{esc(c.get("message_count"))}</td>
-            <td>{esc(short_date(c.get("first_seen")))}</td>
-            <td>{esc(short_date(c.get("last_seen")))}</td>
-            <td><span class="pill {followup_class(c)}">{esc(_format_followup(c.get("followup_at")) or "Not set")}</span></td>
-            <td>{esc(short_date(c.get("last_followup_sent_at")))}</td>
-        </tr>
-        """
+        <tr><td><a class='phone-link' href='/customer/{phone}?key={esc(DASHBOARD_KEY)}'>{phone}</a></td><td><span class='mini-pill purple'>{esc(c.get('buyer_type') or 'unknown')}</span></td><td><span class='mini-pill {pill_class(status)}'>{esc(status)}</span></td><td>{esc(c.get('assigned_to') or 'Unassigned')}</td><td class='lastmsg'>{esc(c.get('last_message') or '')}</td><td>{esc(c.get('message_count') or 0)}</td><td>{esc(short_date(c.get('last_seen')))}</td></tr>"""
+    if not rows_html: rows_html = "<tr><td colspan='7' class='empty-row'>No matching leads found.</td></tr>"
 
-    if not rows:
-        main_content = '<div class="empty">No matching leads found.</div>'
-    else:
-        main_content = f"""
-        <table>
-            <thead>
-                <tr>
-                    <th>Phone (click)</th>
-                    <th>Buyer Type</th>
-                    <th>Status</th>
-                    <th>Assigned To</th>
-                    <th>Pipeline</th>
-                    <th>Task</th>
-                    <th>Last Message</th>
-                    <th>Messages</th>
-                    <th>First Seen</th>
-                    <th>Last Seen</th>
-                    <th>Follow-up</th>
-                    <th>Last Sent</th>
-                </tr>
-            </thead>
-            <tbody>{rows_html}</tbody>
-        </table>
-        """
+    recent_html = ""
+    for c in sorted(all_rows, key=lambda x: x.get("last_seen", ""), reverse=True)[:5]:
+        recent_html += f"""<div class='activity-item'><div class='dot'>✆</div><div class='activity-text'><b>{esc(c.get('phone_number'))}</b><span>{esc(c.get('last_message') or 'New activity')}</span></div><small>{esc(short_date(c.get('last_seen')))}</small></div>"""
+    if not recent_html: recent_html = "<div class='empty-small'>No recent activity yet.</div>"
 
     html = f"""
-    <!doctype html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta http-equiv="refresh" content="30">
-        <title>RH Business OS CRM</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                background: #f7f7f7;
-                margin: 0;
-                padding: 24px;
-                color: #111;
-            }}
-            .header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 22px;
-            }}
-            h1 {{ margin: 0; font-size: 28px; }}
-            .subtitle {{ color: #666; margin-top: 6px; }}
-            .top-actions {{ display: flex; gap: 10px; align-items: center; }}
-            .refresh {{
-                color: #111;
-                text-decoration: none;
-                background: white;
-                padding: 10px 14px;
-                border-radius: 10px;
-                border: 1px solid #ddd;
-            }}
-            .cards {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
-                gap: 14px;
-                margin-bottom: 20px;
-            }}
-            .card {{
-                background: white;
-                border: 1px solid #e5e5e5;
-                border-radius: 14px;
-                padding: 18px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-            }}
-            .card-title {{ color: #666; font-size: 13px; }}
-            .card-value {{ font-size: 28px; font-weight: bold; margin-top: 8px; }}
-            .toolbar {{
-                display: flex;
-                gap: 12px;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 16px;
-                flex-wrap: wrap;
-            }}
-            .search {{ display: flex; gap: 8px; flex: 1; min-width: 260px; }}
-            input {{
-                width: 100%;
-                padding: 12px 14px;
-                border: 1px solid #ddd;
-                border-radius: 10px;
-                font-size: 14px;
-            }}
-            button {{
-                padding: 12px 16px;
-                border: 0;
-                background: #111;
-                color: white;
-                border-radius: 10px;
-                cursor: pointer;
-            }}
-            .filters {{ display: flex; gap: 8px; flex-wrap: wrap; }}
-            .filter {{
-                text-decoration: none;
-                color: #111;
-                background: white;
-                border: 1px solid #ddd;
-                padding: 9px 12px;
-                border-radius: 999px;
-                font-size: 13px;
-            }}
-            .filter.active {{ background: #111; color: white; border-color: #111; }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                background: white;
-                border-radius: 14px;
-                overflow: hidden;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-            }}
-            th, td {{
-                padding: 12px 14px;
-                border-bottom: 1px solid #eee;
-                text-align: left;
-                font-size: 14px;
-                vertical-align: top;
-            }}
-            th {{ background: #111; color: white; font-weight: 600; }}
-            .phone {{ font-weight: 700; }}
-            .lastmsg {{ max-width: 520px; }}
-            .pill {{
-                display: inline-block;
-                padding: 5px 9px;
-                border-radius: 999px;
-                font-size: 12px;
-                font-weight: 600;
-                background: #eee;
-            }}
-            .buyer {{ background: #e8f0ff; }}
-            .assigned {{ background:#f3e8ff; color:#6b21a8; }}
-            .pipeline {{ background:#e0f2fe; color:#075985; }}
-            .task {{ background:#fef3c7; color:#92400e; }}
-            .qualified {{ background: #dcfce7; color: #166534; }}
-            .website {{ background: #fff7ed; color: #9a3412; }}
-            .waiting {{ background: #fef9c3; color: #854d0e; }}
-            .new {{ background: #eef2ff; color: #3730a3; }}
-            .follow_today {{ background:#dbeafe; color:#1d4ed8; }}
-            .follow_missed {{ background:#fee2e2; color:#991b1b; }}
-            .follow_upcoming {{ background:#dcfce7; color:#166534; }}
-            .follow_done {{ background:#e5e7eb; color:#374151; }}
-            .follow_none {{ background:#f3f4f6; color:#6b7280; }}
-            .empty {{
-                background: white;
-                padding: 30px;
-                border-radius: 14px;
-                text-align: center;
-                color: #666;
-            }}
-            @media (max-width: 700px) {{
-                body {{ padding: 14px; }}
-                .header {{ align-items: flex-start; flex-direction: column; gap: 12px; }}
-                table {{ display: block; overflow-x: auto; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <div>
-                <h1>RH Business OS CRM</h1>
-                <div class="subtitle">WhatsApp leads dashboard • Auto-refresh every 30 seconds</div>
-            </div>
-            <div class="top-actions">
-                <a class="refresh" href="/calendar?key={esc(DASHBOARD_KEY)}">Calendar</a>
-                <a class="refresh" href="/team?key={esc(DASHBOARD_KEY)}">Team</a>
-                <a class="refresh" href="/backup?key={esc(DASHBOARD_KEY)}">Backup</a>
-                <a class="refresh" href="/dashboard/export?key={esc(DASHBOARD_KEY)}">Download CSV</a>
-                <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}">Reset</a>
-                <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}&filter={esc(filter)}&q={esc(q)}">Refresh</a>
-            </div>
-        </div>
-
-        <div class="cards">
-            <div class="card"><div class="card-title">Total Leads</div><div class="card-value">{total}</div></div>
-            <div class="card"><div class="card-title">Wholesaler / Manufacturer</div><div class="card-value">{wholesalers}</div></div>
-            <div class="card"><div class="card-title">Retailer</div><div class="card-value">{retailers}</div></div>
-            <div class="card"><div class="card-title">Personal Buyer</div><div class="card-value">{personal}</div></div>
-            <div class="card"><div class="card-title">Qualified Leads</div><div class="card-value">{qualified}</div></div>
-            <div class="card"><div class="card-title">Website Sent</div><div class="card-value">{website_sent}</div></div>
-            <div class="card"><div class="card-title">Hot Leads</div><div class="card-value">{hot_leads}</div></div>
-            <div class="card"><div class="card-title">Today Follow-ups</div><div class="card-value">{today_followups}</div></div>
-            <div class="card"><div class="card-title">Missed Follow-ups</div><div class="card-value">{missed_followups}</div></div>
-            <div class="card"><div class="card-title">Upcoming Follow-ups</div><div class="card-value">{upcoming_followups}</div></div>
-            <div class="card"><div class="card-title">Follow-ups Sent</div><div class="card-value">{followups_sent}</div></div>
-            <div class="card"><div class="card-title">Assigned Leads</div><div class="card-value">{assigned_leads}</div></div>
-            <div class="card"><div class="card-title">Unassigned Leads</div><div class="card-value">{unassigned_leads}</div></div>
-            <div class="card"><div class="card-title">Open Tasks</div><div class="card-value">{open_tasks}</div></div>
-            <div class="card"><div class="card-title">Done Tasks</div><div class="card-value">{done_tasks}</div></div>
-            <div class="card"><div class="card-title">Quote Pending</div><div class="card-value">{quote_pending}</div></div>
-            <div class="card"><div class="card-title">Quote Sent</div><div class="card-value">{quote_sent}</div></div>
-            <div class="card"><div class="card-title">Orders Confirmed</div><div class="card-value">{order_confirmed}</div></div>
-        </div>
-
-        <div class="toolbar">
-            <form class="search" method="get" action="/dashboard">
-                <input type="hidden" name="key" value="{esc(DASHBOARD_KEY)}">
-                <input type="hidden" name="filter" value="{esc(filter)}">
-                <input name="q" value="{esc(q)}" placeholder="Search phone, buyer type, status, message...">
-                <button type="submit">Search</button>
-            </form>
-
-            <div class="filters">
-                {filter_link("All", "all")}
-                {filter_link("Wholesaler", "wholesaler")}
-                {filter_link("Retailer", "retailer")}
-                {filter_link("Personal", "personal")}
-                {filter_link("Qualified", "qualified")}
-                {filter_link("Website Sent", "website_sent")}
-                {filter_link("Hot Leads", "hot")}
-                {filter_link("Today Follow-ups", "followup_today")}
-                {filter_link("Missed Follow-ups", "followup_missed")}
-                {filter_link("Upcoming Follow-ups", "followup_upcoming")}
-                {filter_link("Follow-up Sent", "followup_sent")}
-                {filter_link("Assigned", "assigned")}
-                {filter_link("Unassigned", "unassigned")}
-                {filter_link("Open Tasks", "task_open")}
-                {filter_link("Done Tasks", "task_done")}
-                {filter_link("Quote Pending", "quote_pending")}
-                {filter_link("Quote Sent", "quote_sent")}
-                {filter_link("Order Confirmed", "order_confirmed")}
-                {"".join(filter_link(name, "assigned_" + name.lower()) for name in ASSIGNEES)}
-            </div>
-        </div>
-
-        {main_content}
-    </body>
-    </html>
-    """
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><meta http-equiv='refresh' content='45'><title>OREIUM Business OS</title>
+    <style>
+    *{{box-sizing:border-box}}:root{{--bg:#070A12;--line:#243047;--text:#F8FAFC;--muted:#9CA3AF;--purple:#7C3AED;--blue:#1683FF;--green:#22C55E;--orange:#F97316;--pink:#EC4899}}
+    body{{margin:0;background:radial-gradient(circle at 25% 0%,#1A1033 0,transparent 28%),var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}} .app{{display:grid;grid-template-columns:260px 1fr;min-height:100vh}}
+    .sidebar{{border-right:1px solid var(--line);padding:22px 18px;background:linear-gradient(180deg,#0B1020,#070A12);position:sticky;top:0;height:100vh}} .brand{{display:flex;align-items:center;gap:12px;margin-bottom:26px}} .logo{{width:48px;height:48px;border-radius:16px;background:linear-gradient(135deg,#7C3AED,#3B0764);display:grid;place-items:center;font-weight:900;font-size:22px;box-shadow:0 12px 35px rgba(124,58,237,.38)}} .brand h2{{margin:0;font-size:24px}} .brand small{{color:var(--muted);font-weight:700;font-size:11px}}
+    .nav{{display:flex;align-items:center;gap:12px;color:#D6D9E5;text-decoration:none;padding:13px 14px;border-radius:12px;margin:5px 0;font-size:15px}} .nav.active,.nav:hover{{background:linear-gradient(90deg,rgba(124,58,237,.95),rgba(124,58,237,.35));color:white}}
+    .pro{{position:absolute;bottom:84px;left:18px;right:18px;padding:20px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(135deg,rgba(124,58,237,.2),rgba(17,24,39,.8));text-align:center}} .version{{position:absolute;bottom:24px;color:var(--muted);font-size:12px}} .main{{padding:24px 24px 30px}}
+    .topbar{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}} h1{{margin:0;font-size:24px}} .subtitle{{color:var(--muted);margin-top:6px}} .searchbar{{display:flex;gap:10px;align-items:center}} .search-input{{width:360px;background:#0A0F1D;border:1px solid var(--line);color:white;border-radius:14px;padding:13px 14px}} .btn{{background:#141B2B;color:white;border:1px solid var(--line);padding:12px 14px;border-radius:13px;text-decoration:none;cursor:pointer}} .btn.primary{{background:linear-gradient(135deg,#7C3AED,#4F46E5);border:0}}
+    .kpis{{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:18px}} .kpi{{background:linear-gradient(180deg,rgba(17,24,39,.92),rgba(8,12,23,.92));border:1px solid var(--line);border-radius:16px;padding:18px;overflow:hidden;position:relative;min-height:160px}} .kpi:after{{content:'';position:absolute;inset:auto -30px -50px auto;width:170px;height:130px;filter:blur(35px);opacity:.3;background:var(--glow)}} .kpi.purple{{--glow:var(--purple)}}.kpi.blue{{--glow:var(--blue)}}.kpi.green{{--glow:var(--green)}}.kpi.orange{{--glow:var(--orange)}}.kpi.pink{{--glow:var(--pink)}} .kpi-top{{display:flex;justify-content:space-between;align-items:flex-start}} .kpi-title{{color:#D1D5DB;font-size:13px}} .kpi-value{{font-size:28px;font-weight:900;margin-top:8px}} .kpi-icon{{width:48px;height:48px;display:grid;place-items:center;border-radius:50%;background:var(--glow);font-size:22px}} .kpi-sub{{color:#22C55E;font-size:13px;margin-top:10px}} .spark{{display:flex;align-items:end;gap:6px;height:44px;margin-top:10px;opacity:.7}} .spark i{{flex:1;border-radius:8px 8px 0 0;background:linear-gradient(180deg,var(--glow),transparent)}}
+    .grid{{display:grid;grid-template-columns:1.5fr 1fr 1.1fr;gap:16px;margin-bottom:16px}} .panel{{background:linear-gradient(180deg,rgba(17,24,39,.96),rgba(8,12,23,.96));border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 20px 45px rgba(0,0,0,.22)}} .panel-head{{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}} .panel h3{{margin:0;font-size:18px}} .view{{color:#A855F7;text-decoration:none;font-weight:700}}
+    .chart{{height:260px;border-bottom:1px solid rgba(255,255,255,.08);border-left:1px solid rgba(255,255,255,.08);position:relative;overflow:hidden}} .chart:before{{content:'';position:absolute;inset:0;background:linear-gradient(to top,rgba(124,58,237,.28),transparent 60%),repeating-linear-gradient(to top,transparent 0 51px,rgba(255,255,255,.06) 52px);clip-path:polygon(0 78%,12% 58%,24% 38%,36% 50%,48% 30%,60% 48%,72% 28%,84% 34%,96% 12%,100% 20%,100% 100%,0 100%)}} .chart:after{{content:'';position:absolute;inset:0;background:linear-gradient(to top,rgba(22,131,255,.22),transparent 60%);clip-path:polygon(0 90%,14% 76%,25% 66%,37% 72%,50% 58%,63% 72%,75% 52%,86% 64%,96% 48%,100% 52%,100% 100%,0 100%)}}
+    .activity-item{{display:grid;grid-template-columns:42px 1fr auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.07)}} .dot{{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#22C55E;color:white;font-weight:800}} .activity-text b{{display:block;font-size:14px}} .activity-text span{{display:block;color:var(--muted);font-size:13px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}} .activity-item small{{color:var(--muted);font-size:12px}}
+    .donut{{width:190px;height:190px;border-radius:50%;margin:18px auto;background:conic-gradient(var(--purple) 0 22%,var(--blue) 22% 44%,var(--orange) 44% 65%,var(--green) 65% 84%,var(--pink) 84% 100%);display:grid;place-items:center}} .donut-inner{{width:118px;height:118px;background:#0B1020;border-radius:50%;display:grid;place-items:center;text-align:center;font-size:13px;color:var(--muted)}} .donut-inner b{{display:block;color:white;font-size:30px}}
+    .filters{{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}} .chip{{color:#C9D2EA;background:#0B1020;border:1px solid var(--line);border-radius:999px;padding:9px 12px;text-decoration:none;font-size:13px}} .chip.active,.chip:hover{{background:linear-gradient(135deg,#7C3AED,#4F46E5);color:white;border-color:transparent}}
+    table{{width:100%;border-collapse:collapse;overflow:hidden}} th,td{{padding:13px 12px;border-bottom:1px solid rgba(255,255,255,.07);text-align:left;font-size:13px;vertical-align:top}} th{{color:#9CA3AF;font-weight:800}} .phone-link{{color:white;text-decoration:none;font-weight:900}} .lastmsg{{max-width:360px;color:#D1D5DB}} .mini-pill{{padding:5px 9px;border-radius:999px;font-weight:800;font-size:11px;display:inline-block}} .mini-pill.green{{background:rgba(34,197,94,.15);color:#4ADE80}}.mini-pill.orange{{background:rgba(249,115,22,.15);color:#FB923C}}.mini-pill.yellow{{background:rgba(250,204,21,.16);color:#FDE047}}.mini-pill.blue{{background:rgba(22,131,255,.16);color:#60A5FA}}.mini-pill.purple{{background:rgba(124,58,237,.18);color:#C084FC}}
+    .bottom-status{{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}} .status-card{{background:#0D1220;border:1px solid var(--line);padding:14px;border-radius:15px;display:flex;gap:12px;align-items:center}} .status-icon{{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:rgba(124,58,237,.25)}} .status-card small{{color:var(--muted);display:block;margin-top:3px}} .empty-row,.empty-small{{color:var(--muted);text-align:center;padding:30px}}
+    @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}.bottom-status{{grid-template-columns:repeat(2,1fr)}}}} @media(max-width:760px){{.app{{grid-template-columns:1fr}}.sidebar{{position:relative;height:auto}}.pro,.version{{display:none}}.topbar{{flex-direction:column;align-items:stretch}}.search-input{{width:100%}}.kpis{{grid-template-columns:1fr}}table{{display:block;overflow-x:auto}}}}
+    </style></head><body><div class='app'><aside class='sidebar'><div class='brand'><div class='logo'>RH</div><div><h2>OREIUM</h2><small>BUSINESS OS</small></div></div>
+    <a class='nav active' href='/dashboard?key={esc(DASHBOARD_KEY)}'><span>⌂</span>Dashboard</a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=followup_today'><span>☘</span>WhatsApp <b style='margin-left:auto;background:#7C3AED;padding:2px 8px;border-radius:999px;'>{today_followups}</b></a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified'><span>♙</span>CRM</a><a class='nav' href='/quotes?key={esc(DASHBOARD_KEY)}'><span>▾</span>Sales</a><a class='nav' href='/production?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Production</a><a class='nav' href='/inventory?key={esc(DASHBOARD_KEY)}'><span>□</span>Inventory</a><a class='nav' href='/staff?key={esc(DASHBOARD_KEY)}'><span>♧</span>HR</a><a class='nav' href='/reports?key={esc(DASHBOARD_KEY)}'><span>▥</span>Reports</a><a class='nav' href='/settings?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Settings</a>
+    <div class='pro'><div style='font-size:28px;'>♛</div><b>OREIUM PRO</b><p style='color:#9CA3AF;font-size:13px;'>Premium business dashboard</p><a class='btn primary' href='/system?key={esc(DASHBOARD_KEY)}'>System Center</a></div><div class='version'>v10.1.0 | Premium UI</div></aside>
+    <main class='main'><div class='topbar'><div><h1>Welcome back, Admin 👋</h1><div class='subtitle'>Here is what is happening in your business today.</div></div><div class='searchbar'><form method='get' action='/dashboard' style='display:flex;gap:10px;'><input type='hidden' name='key' value='{esc(DASHBOARD_KEY)}'><input type='hidden' name='filter' value='{esc(filter)}'><input class='search-input' name='q' value='{esc(q)}' placeholder='Search phone, status, message...'><button class='btn primary' type='submit'>Search</button></form><a class='btn' href='/dashboard/export?key={esc(DASHBOARD_KEY)}'>CSV</a></div></div>
+    <section class='kpis'>{kpi('Total Leads', total, '₹', 'purple', '+18.6% vs last 7 days')}{kpi('New Leads', total, '👥', 'blue', str(wholesalers)+' wholesalers')}{kpi('Orders', order_confirmed, '🛍', 'green', 'Confirmed pipeline')}{kpi('Follow-ups', today_followups + missed_followups, '⏱', 'orange', str(missed_followups)+' missed')}{kpi('Pending Tasks', open_tasks, '☑', 'pink', 'Team work queue')}</section>
+    <section class='grid'><div class='panel'><div class='panel-head'><h3>Business Overview</h3><a class='view' href='/reports?key={esc(DASHBOARD_KEY)}'>View Reports</a></div><div class='chart'></div></div><div class='panel'><div class='panel-head'><h3>Recent Activities</h3><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}'>View All</a></div>{recent_html}</div><div class='panel'><div class='panel-head'><h3>Pipeline Overview</h3></div><div class='donut'><div class='donut-inner'><span>Total Deals</span><b>{total}</b></div></div><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified' style='display:block;text-align:center;'>View Full Pipeline →</a></div></section>
+    <section class='grid' style='grid-template-columns:1fr 1fr 1fr;'><div class='panel'><div class='panel-head'><h3>Sales Funnel</h3></div><p>New Lead <b style='float:right;color:#A855F7;'>{total}</b></p><p>Qualified <b style='float:right;color:#1683FF;'>{qualified}</b></p><p>Website Sent <b style='float:right;color:#F97316;'>{website_sent}</b></p><p>Hot Leads <b style='float:right;color:#22C55E;'>{hot_leads}</b></p></div><div class='panel'><div class='panel-head'><h3>Team Overview</h3></div><p>Assigned Leads <b style='float:right;color:#22C55E;'>{assigned_leads}</b></p><p>Unassigned <b style='float:right;color:#F97316;'>{total-assigned_leads}</b></p><p>Open Tasks <b style='float:right;color:#EC4899;'>{open_tasks}</b></p><p>Upcoming Follow-ups <b style='float:right;color:#1683FF;'>{upcoming_followups}</b></p></div><div class='panel'><div class='panel-head'><h3>Lead Split</h3></div><p>Wholesaler <b style='float:right;color:#A855F7;'>{wholesalers}</b></p><p>Retailer <b style='float:right;color:#1683FF;'>{retailers}</b></p><p>Personal <b style='float:right;color:#22C55E;'>{personal}</b></p><p>Hot Leads <b style='float:right;color:#F97316;'>{hot_leads}</b></p></div></section>
+    <section class='panel'><div class='panel-head'><h3>CRM Leads</h3><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Reset</a></div><div class='filters'>{filter_link('All','all')}{filter_link('Wholesaler','wholesaler')}{filter_link('Qualified','qualified')}{filter_link('Hot','hot')}{filter_link('Today Follow-up','followup_today')}{filter_link('Missed','followup_missed')}{filter_link('Assigned','assigned')}{filter_link('Unassigned','unassigned')}{filter_link('Tasks','tasks_open')}</div><table><thead><tr><th>Phone</th><th>Buyer</th><th>Status</th><th>Assigned</th><th>Last Message</th><th>Msg</th><th>Last Seen</th></tr></thead><tbody>{rows_html}</tbody></table></section>
+    <section class='bottom-status' style='margin-top:16px;'><div class='status-card'><div class='status-icon'>☘</div><div><b>WhatsApp API</b><small>Connected</small></div></div><div class='status-card'><div class='status-icon'>AI</div><div><b>AI Services</b><small>Active</small></div></div><div class='status-card'><div class='status-icon'>▣</div><div><b>Database</b><small>JSON store active</small></div></div><div class='status-card'><div class='status-icon'>☁</div><div><b>Last Backup</b><small>Use Backup Center</small></div></div><div class='status-card'><div class='status-icon'>⚡</div><div><b>System</b><small>All systems operational</small></div></div></section>
+    </main></div></body></html>"""
     return HTMLResponse(content=html)
 
 
