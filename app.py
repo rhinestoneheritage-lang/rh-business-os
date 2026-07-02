@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v1.5
+RH Business OS — WhatsApp AI Bot v1.9
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -20,10 +20,11 @@ import logging
 import os
 import csv
 import io
+import zipfile
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 
 from whatsapp_service import WhatsAppService
@@ -123,9 +124,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v1.5",
+    title="RH Business OS — WhatsApp AI Bot v1.9",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="1.5.0",
+    version="1.9.0",
 )
 
 whatsapp = WhatsAppService(
@@ -865,6 +866,9 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                 <div class="subtitle">WhatsApp leads dashboard • Auto-refresh every 30 seconds</div>
             </div>
             <div class="top-actions">
+                <a class="refresh" href="/calendar?key={esc(DASHBOARD_KEY)}">Calendar</a>
+                <a class="refresh" href="/team?key={esc(DASHBOARD_KEY)}">Team</a>
+                <a class="refresh" href="/backup?key={esc(DASHBOARD_KEY)}">Backup</a>
                 <a class="refresh" href="/dashboard/export?key={esc(DASHBOARD_KEY)}">Download CSV</a>
                 <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}">Reset</a>
                 <a class="refresh" href="/dashboard?key={esc(DASHBOARD_KEY)}&filter={esc(filter)}&q={esc(q)}">Refresh</a>
@@ -1063,6 +1067,7 @@ async def customer_profile(phone: str, key: str = ""):
             </div>
             <div>
                 <a class="btn" href="/dashboard?key={esc(DASHBOARD_KEY)}">Back to Dashboard</a>
+                <a class="btn" href="/customer/{esc(phone)}/timeline?key={esc(DASHBOARD_KEY)}">Timeline</a>
                 <a class="btn" href="https://wa.me/{esc(phone)}" target="_blank">Open WhatsApp</a>
             </div>
         </div>
@@ -1426,11 +1431,172 @@ async def send_customer_template(phone: str, key: str = "", template_key: str = 
         _save_customers(customers)
     return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
 
+
+# ── v1.6 Customer Timeline ───────────────────────────────────────────────────
+@app.get("/customer/{phone}/timeline", response_class=HTMLResponse)
+async def customer_timeline(phone: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers()
+    customer = customers.get(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+
+    def esc(value):
+        if value is None:
+            return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    events = []
+    for field, label in [
+        ("first_seen", "Lead created"), ("last_seen", "Last activity"),
+        ("assigned_at", "Lead assigned"), ("unassigned_at", "Lead unassigned"),
+        ("status_updated_at", "Status updated"), ("pipeline_updated_at", "Pipeline updated"),
+        ("notes_updated_at", "Notes updated"), ("followup_updated_at", "Follow-up updated"),
+        ("followup_done_at", "Follow-up marked done"), ("last_followup_sent_at", "Follow-up WhatsApp sent"),
+        ("task_updated_at", "Task updated"), ("task_done_at", "Task completed"),
+        ("last_template_sent_at", "Quick reply sent"), ("hot_lead_updated_at", "Hot lead updated"),
+    ]:
+        if customer.get(field):
+            events.append({"at": customer.get(field), "type": label, "detail": field})
+
+    for m in _load_messages():
+        if _customer_message_filter(m, phone):
+            direction = "Outbound" if m.get("direction") == "outbound" or m.get("from") == "RH_BUSINESS_OS" else "Inbound"
+            events.append({"at": m.get("received_at") or m.get("timestamp"), "type": f"{direction} message", "detail": m.get("body")})
+
+    events = sorted(events, key=lambda x: str(x.get("at") or ""), reverse=True)[:200]
+    rows = "".join(f"""
+        <div class='event'>
+            <div class='time'>{esc(e.get('at'))}</div>
+            <div class='etype'>{esc(e.get('type'))}</div>
+            <div class='detail'>{esc(e.get('detail'))}</div>
+        </div>
+    """ for e in events) or "<div class='empty'>No timeline activity yet.</div>"
+
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>
+    <title>Timeline - {esc(phone)}</title><style>
+    body{{font-family:Arial;background:#f7f7f7;padding:24px;color:#111}} .wrap{{max-width:900px;margin:auto}}
+    .top{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}}
+    .event{{background:white;border:1px solid #e5e5e5;border-radius:14px;padding:14px;margin:10px 0;box-shadow:0 2px 8px rgba(0,0,0,.04)}}
+    .time{{color:#777;font-size:12px;margin-bottom:6px}} .etype{{font-weight:700;margin-bottom:6px}} .detail{{white-space:pre-wrap;color:#333}}
+    .empty{{background:white;padding:24px;border-radius:14px;text-align:center;color:#777}}
+    </style></head><body><div class='wrap'><div class='top'><div><h1>Customer Timeline</h1><div>{esc(phone)}</div></div>
+    <a class='btn' href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>Back to Profile</a></div>{rows}</div></body></html>
+    """)
+
+
+# ── v1.7 Follow-up Calendar ──────────────────────────────────────────────────
+@app.get("/calendar", response_class=HTMLResponse)
+async def followup_calendar(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    def esc(value):
+        if value is None:
+            return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    rows = []
+    for c in _load_customers().values():
+        if c.get("followup_at") and c.get("followup_done") is not True:
+            rows.append({"type":"Follow-up", "due":c.get("followup_at"), "phone":c.get("phone_number"), "assigned":c.get("assigned_to") or "Unassigned", "note":c.get("followup_note") or c.get("last_message") or ""})
+        if c.get("task_due_at") and c.get("task_status") != "DONE":
+            rows.append({"type":"Task", "due":c.get("task_due_at"), "phone":c.get("phone_number"), "assigned":c.get("assigned_to") or "Unassigned", "note":c.get("task_text") or ""})
+    rows.sort(key=lambda x: str(x.get("due") or ""))
+    body = "".join(f"""<tr><td>{esc(r['due'])}</td><td>{esc(r['type'])}</td><td><a href='/customer/{esc(r['phone'])}?key={esc(DASHBOARD_KEY)}'>{esc(r['phone'])}</a></td><td>{esc(r['assigned'])}</td><td>{esc(r['note'])}</td></tr>""" for r in rows) or "<tr><td colspan='5' style='text-align:center;color:#777;padding:30px'>No pending follow-ups or tasks.</td></tr>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Follow-up Calendar</title>
+    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}} th{{background:#111;color:white}}</style></head>
+    <body><div class='top'><h1>Follow-up Calendar</h1><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a></div><table><thead><tr><th>Due</th><th>Type</th><th>Customer</th><th>Assigned</th><th>Note</th></tr></thead><tbody>{body}</tbody></table></body></html>
+    """)
+
+
+# ── v1.8 Team Dashboard ──────────────────────────────────────────────────────
+@app.get("/team", response_class=HTMLResponse)
+async def team_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    def esc(value):
+        if value is None:
+            return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    customers = list(_load_customers().values())
+    names = ASSIGNEES + ["Unassigned"]
+    rows = ""
+    for name in names:
+        member = [c for c in customers if (c.get("assigned_to") or "Unassigned") == name]
+        hot = sum(1 for c in member if c.get("is_hot_lead") is True)
+        open_tasks = sum(1 for c in member if c.get("task_text") and c.get("task_status") != "DONE")
+        missed = sum(1 for c in member if _followup_status(c) == "missed")
+        qualified = sum(1 for c in member if c.get("lead_status") == "QUALIFIED_LEAD")
+        orders = sum(1 for c in member if c.get("pipeline_stage") == "ORDER_CONFIRMED")
+        filter_key = "unassigned" if name == "Unassigned" else "assigned_" + name.lower()
+        rows += f"<tr><td><a href='/dashboard?key={esc(DASHBOARD_KEY)}&filter={esc(filter_key)}'>{esc(name)}</a></td><td>{len(member)}</td><td>{hot}</td><td>{open_tasks}</td><td>{missed}</td><td>{qualified}</td><td>{orders}</td></tr>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Team Dashboard</title>
+    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head>
+    <body><div class='top'><h1>Team Dashboard</h1><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a></div><table><thead><tr><th>Team Member</th><th>Total Leads</th><th>Hot</th><th>Open Tasks</th><th>Missed Follow-ups</th><th>Qualified</th><th>Orders</th></tr></thead><tbody>{rows}</tbody></table></body></html>
+    """)
+
+
+# ── v1.9 Backup & Restore ────────────────────────────────────────────────────
+@app.get("/backup", response_class=HTMLResponse)
+async def backup_page(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    def esc(value):
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Backup & Restore</title>
+    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .card{{background:white;padding:20px;border-radius:14px;border:1px solid #e5e5e5;max-width:700px}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer}} input{{padding:12px;border:1px solid #ddd;border-radius:10px}}</style></head>
+    <body><div class='card'><h1>Backup & Restore</h1><p>Download full JSON backup of customers, sessions and messages.</p><p><a class='btn' href='/backup/download?key={esc(DASHBOARD_KEY)}'>Download Backup ZIP</a> <a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a></p><hr><h3>Restore customers.json only</h3><p style='color:#777'>Safety: restore only replaces customers.json. Sessions/messages remain safe.</p><form method='post' enctype='multipart/form-data' action='/backup/restore-customers?key={esc(DASHBOARD_KEY)}'><input type='file' name='file' accept='.json' required> <button type='submit'>Restore Customers</button></form></div></body></html>
+    """)
+
+@app.get("/backup/download")
+async def download_backup(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, arc in [(CUSTOMERS_FILE, "customers.json"), (SESSIONS_FILE, "sessions.json"), (MESSAGES_FILE, "messages.json")]:
+            if os.path.exists(path):
+                zf.write(path, arc)
+            else:
+                zf.writestr(arc, "{}" if arc != "messages.json" else "[]")
+        zf.writestr("backup_info.json", json.dumps({"created_at": datetime.utcnow().isoformat()+"Z", "version":"1.9.0"}, indent=2))
+    mem.seek(0)
+    return StreamingResponse(mem, media_type="application/zip", headers={"Content-Disposition":"attachment; filename=rh_business_os_backup_v19.zip"})
+
+@app.post("/backup/restore-customers")
+async def restore_customers_backup(key: str = "", file: UploadFile = File(...)):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    raw = await file.read()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("customers.json must be an object keyed by phone number")
+    except Exception as exc:
+        return HTMLResponse(content=f"Invalid JSON backup: {exc}", status_code=400)
+    os.makedirs(os.path.dirname(CUSTOMERS_FILE), exist_ok=True)
+    if os.path.exists(CUSTOMERS_FILE):
+        safety = CUSTOMERS_FILE + ".before_restore_" + datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        with open(CUSTOMERS_FILE, "rb") as src, open(safety, "wb") as dst:
+            dst.write(src.read())
+    with open(CUSTOMERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return RedirectResponse(url=f"/dashboard?key={DASHBOARD_KEY}", status_code=303)
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "1.5.0",
+        "version": "1.9.0",
         "status":  "running",
     }
