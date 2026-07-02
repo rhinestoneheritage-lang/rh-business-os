@@ -136,7 +136,7 @@ MSG_FOLLOWUP_WHOLESALER = (
 app = FastAPI(
     title="RH Business OS — WhatsApp AI Bot v6.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="7.5.0",
+    version="8.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -2717,7 +2717,7 @@ async def save_broadcast_queue(key: str = "", audience: str = Form(""), schedule
 async def data_export(key: str = ""):
     if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
     bundle = {
-        "exported_at": datetime.utcnow().isoformat()+"Z", "version": "7.5.0",
+        "exported_at": datetime.utcnow().isoformat()+"Z", "version": "8.5.0",
         "customers": _load_customers(), "documents": _json_load(DOCUMENTS_FILE, {}),
         "design_requests": _json_load(DESIGN_REQUESTS_FILE, {}), "approvals": _json_load(APPROVALS_FILE, {}),
         "dispatch": _json_load(DISPATCH_FILE, {}), "payment_reminders": _json_load(PAYMENT_REMINDERS_FILE, {}),
@@ -2927,7 +2927,7 @@ async def ai_export(key: str = ""):
     customers = _load_customers(); lead_scores = {}
     for phone,c in customers.items():
         score, reasons = _lead_score(c); lead_scores[phone] = {"score": score, "reasons": reasons}
-    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version": "7.5.0", "lead_scores": lead_scores, "ai_settings": _ai_settings(), "suggestions": _json_load(AI_SUGGESTIONS_FILE, {}), "smart_reminders": _json_load(SMART_REMINDERS_FILE, {}), "auto_quote_suggestions": _json_load(AUTO_QUOTES_FILE, {})})
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version": "8.5.0", "lead_scores": lead_scores, "ai_settings": _ai_settings(), "suggestions": _json_load(AI_SUGGESTIONS_FILE, {}), "smart_reminders": _json_load(SMART_REMINDERS_FILE, {}), "auto_quote_suggestions": _json_load(AUTO_QUOTES_FILE, {})})
 
 
 
@@ -3142,13 +3142,13 @@ async def enterprise_system_page(key: str = ""):
         exists = os.path.exists(path); size = os.path.getsize(path) if exists else 0
         rows += f"<tr><td>{_safe_html(path)}</td><td>{'OK' if exists else 'Missing'}</td><td>{size} bytes</td></tr>"
     audit_count = len(_json_load(AUDIT_FILE, [])) if isinstance(_json_load(AUDIT_FILE, []), list) else len(_json_load(AUDIT_FILE, {}))
-    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>System Status & Security</h1>{_phase7_nav()}<div class='cards'><div class='card'><b>App Version</b><h2>7.5.0</h2></div><div class='card'><b>Audit Events</b><h2>{audit_count}</h2></div><div class='card'><b>Mobile UI</b><h2>Improved</h2></div></div><table><tr><th>Data File</th><th>Status</th><th>Size</th></tr>{rows}</table></body></html>""")
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase7_style()}</head><body><h1>System Status & Security</h1>{_phase7_nav()}<div class='cards'><div class='card'><b>App Version</b><h2>8.5.0</h2></div><div class='card'><b>Audit Events</b><h2>{audit_count}</h2></div><div class='card'><b>Mobile UI</b><h2>Improved</h2></div></div><table><tr><th>Data File</th><th>Status</th><th>Size</th></tr>{rows}</table></body></html>""")
 
 
 @app.get("/enterprise/export")
 async def enterprise_export(key: str = ""):
     if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
-    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"7.5.0", "users": _enterprise_users(), "roles": _enterprise_roles(), "api_keys": _json_load(ENTERPRISE_API_KEYS_FILE, {}), "email_notifications": _json_load(ENTERPRISE_EMAIL_FILE, {}), "backup_schedule": _json_load(ENTERPRISE_BACKUP_SCHEDULE_FILE, {}), "broadcast_queue": _json_load(BROADCAST_QUEUE_FILE, {})})
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"8.5.0", "users": _enterprise_users(), "roles": _enterprise_roles(), "api_keys": _json_load(ENTERPRISE_API_KEYS_FILE, {}), "email_notifications": _json_load(ENTERPRISE_EMAIL_FILE, {}), "backup_schedule": _json_load(ENTERPRISE_BACKUP_SCHEDULE_FILE, {}), "broadcast_queue": _json_load(BROADCAST_QUEUE_FILE, {})})
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -3156,6 +3156,195 @@ async def enterprise_export(key: str = ""):
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "7.5.0",
+        "version": "8.5.0",
         "status":  "running",
+    }
+
+# ── Phase 8: Final Polish, Analytics, Security & Docs v8.5 ───────────────────
+FINAL_UI_SETTINGS_FILE = os.getenv("FINAL_UI_SETTINGS_FILE", "data/final_ui_settings.json")
+ERROR_LOG_FILE = os.getenv("ERROR_LOG_FILE", "data/error_log.json")
+DEPLOYMENT_CHECKLIST_FILE = os.getenv("DEPLOYMENT_CHECKLIST_FILE", "data/deployment_checklist.json")
+VERSION_NOTES_FILE = os.getenv("VERSION_NOTES_FILE", "data/version_notes.json")
+
+
+def _phase8_style():
+    return """
+    <style>
+        :root{--bg:#f5f7fb;--panel:#fff;--ink:#111827;--muted:#6b7280;--line:#e5e7eb;--dark:#0f172a;--accent:#1d4ed8;--good:#16a34a;--warn:#d97706;--bad:#dc2626;}
+        *{box-sizing:border-box} body{font-family:Inter,Arial,sans-serif;background:var(--bg);margin:0;padding:22px;color:var(--ink)}
+        h1{margin:0 0 6px;font-size:30px;letter-spacing:-.03em}.muted{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}
+        .nav a,.btn,button{background:var(--dark);color:white;text-decoration:none;border:0;border-radius:12px;padding:10px 13px;cursor:pointer;font-weight:700}
+        .nav a.light,.btn.light{background:white;color:var(--ink);border:1px solid var(--line)}
+        .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:18px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
+        .kpi{font-size:32px;font-weight:900;margin-top:8px}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+        table{width:100%;border-collapse:collapse;background:white;border-radius:16px;overflow:hidden;box-shadow:0 8px 24px rgba(15,23,42,.05)} th,td{padding:12px;border-bottom:1px solid var(--line);text-align:left;font-size:14px;vertical-align:top}th{background:var(--dark);color:white}
+        input,select,textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:12px;background:white}label{font-size:13px;color:var(--muted);font-weight:700}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.badge{display:inline-block;border-radius:999px;padding:5px 9px;background:#eef2ff;font-size:12px;font-weight:800}
+        @media(max-width:820px){body{padding:14px}.grid{grid-template-columns:1fr}table{display:block;overflow-x:auto}.cards{grid-template-columns:1fr}.nav a,.btn,button{width:100%;text-align:center}}
+    </style>
+    """
+
+
+def _phase8_nav():
+    k = _safe_html(DASHBOARD_KEY)
+    return f"""
+    <div class='nav'>
+        <a href='/final/dashboard?key={k}'>Final Dashboard</a>
+        <a class='light' href='/final/analytics?key={k}'>Analytics</a>
+        <a class='light' href='/final/security?key={k}'>Security</a>
+        <a class='light' href='/final/errors?key={k}'>Errors</a>
+        <a class='light' href='/final/deployment?key={k}'>Deployment</a>
+        <a class='light' href='/final/docs?key={k}'>Docs</a>
+        <a class='light' href='/dashboard?key={k}'>CRM</a>
+    </div>
+    """
+
+
+def _count_json(path, default):
+    data = _json_load(path, default)
+    if isinstance(data, dict):
+        return len(data)
+    if isinstance(data, list):
+        return len(data)
+    return 0
+
+
+def _phase8_metrics():
+    customers = _load_customers()
+    orders = _json_load(ORDERS_FILE, {}) if 'ORDERS_FILE' in globals() else {}
+    quotes = _json_load(QUOTES_FILE, {}) if 'QUOTES_FILE' in globals() else {}
+    tasks = _json_load(TASKS_FILE, {}) if 'TASKS_FILE' in globals() else {}
+    inventory = _json_load(INVENTORY_FILE, {}) if 'INVENTORY_FILE' in globals() else {}
+    hot = sum(1 for c in customers.values() if c.get('is_hot_lead') is True)
+    qualified = sum(1 for c in customers.values() if c.get('lead_status') == 'QUALIFIED_LEAD')
+    return {"customers": len(customers), "hot": hot, "qualified": qualified, "quotes": len(quotes), "orders": len(orders), "tasks": len(tasks), "inventory_items": len(inventory), "messages": _count_json(MESSAGES_FILE, [])}
+
+
+@app.get("/final/dashboard", response_class=HTMLResponse)
+async def final_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    m = _phase8_metrics()
+    settings = _json_load(FINAL_UI_SETTINGS_FILE, {"brand_name":"RH Business OS", "theme":"Premium Light", "dashboard_refresh":"30"})
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}<title>Final Dashboard</title></head><body>
+    <h1>RH Business OS — Final Polish v8.5</h1><div class='muted'>Premium UI, analytics, security checks, deployment readiness and documentation.</div>{_phase8_nav()}
+    <div class='cards'>
+      <div class='card'><div class='muted'>Total Customers</div><div class='kpi'>{m['customers']}</div></div>
+      <div class='card'><div class='muted'>Qualified Leads</div><div class='kpi good'>{m['qualified']}</div></div>
+      <div class='card'><div class='muted'>Hot Leads</div><div class='kpi warn'>{m['hot']}</div></div>
+      <div class='card'><div class='muted'>Quotes</div><div class='kpi'>{m['quotes']}</div></div>
+      <div class='card'><div class='muted'>Orders</div><div class='kpi good'>{m['orders']}</div></div>
+      <div class='card'><div class='muted'>Messages</div><div class='kpi'>{m['messages']}</div></div>
+    </div>
+    <div class='grid'><div class='card'><h2>UI Settings</h2><form method='post' action='/final/settings/save?key={_safe_html(DASHBOARD_KEY)}'><label>Brand Name</label><input name='brand_name' value='{_safe_html(settings.get('brand_name'))}'><br><br><label>Theme</label><select name='theme'><option>Premium Light</option><option>Compact CRM</option><option>Factory Mode</option></select><br><br><label>Dashboard Refresh Seconds</label><input name='dashboard_refresh' value='{_safe_html(settings.get('dashboard_refresh'))}'><br><br><button>Save Polish Settings</button></form></div>
+    <div class='card'><h2>Final Links</h2><p><a class='btn light' href='/final/analytics?key={_safe_html(DASHBOARD_KEY)}'>Open Analytics</a></p><p><a class='btn light' href='/final/deployment?key={_safe_html(DASHBOARD_KEY)}'>Open Deployment Checklist</a></p><p><a class='btn light' href='/final/export?key={_safe_html(DASHBOARD_KEY)}'>Download Final JSON Export</a></p></div></div>
+    </body></html>""")
+
+
+@app.post("/final/settings/save")
+async def final_settings_save(key: str = "", brand_name: str = Form("RH Business OS"), theme: str = Form("Premium Light"), dashboard_refresh: str = Form("30")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = {"brand_name": brand_name, "theme": theme, "dashboard_refresh": dashboard_refresh, "updated_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(FINAL_UI_SETTINGS_FILE, data); _audit("final_ui_settings_saved", data)
+    return RedirectResponse(url=f"/final/dashboard?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/final/analytics", response_class=HTMLResponse)
+async def final_analytics(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers(); m = _phase8_metrics()
+    buyer_counts = {}
+    status_counts = {}
+    for c in customers.values():
+        buyer_counts[c.get('buyer_type') or 'unknown'] = buyer_counts.get(c.get('buyer_type') or 'unknown', 0) + 1
+        status_counts[c.get('lead_status') or 'unknown'] = status_counts.get(c.get('lead_status') or 'unknown', 0) + 1
+    buyer_rows = ''.join(f"<tr><td>{_safe_html(k)}</td><td>{v}</td></tr>" for k,v in sorted(buyer_counts.items()))
+    status_rows = ''.join(f"<tr><td>{_safe_html(k)}</td><td>{v}</td></tr>" for k,v in sorted(status_counts.items()))
+    conversion = round((m['orders'] / m['customers'] * 100), 2) if m['customers'] else 0
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Analytics Dashboard</h1>{_phase8_nav()}<div class='cards'><div class='card'><div class='muted'>Lead to Order Conversion</div><div class='kpi'>{conversion}%</div></div><div class='card'><div class='muted'>Open Tasks</div><div class='kpi warn'>{m['tasks']}</div></div><div class='card'><div class='muted'>Inventory Items</div><div class='kpi'>{m['inventory_items']}</div></div></div><div class='grid'><div><h2>Buyer Type</h2><table><tr><th>Type</th><th>Count</th></tr>{buyer_rows}</table></div><div><h2>Lead Status</h2><table><tr><th>Status</th><th>Count</th></tr>{status_rows}</table></div></div></body></html>""")
+
+
+@app.get("/final/security", response_class=HTMLResponse)
+async def final_security(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    checks = []
+    checks.append(("Dashboard key changed from default", "PASS" if DASHBOARD_KEY != "RH2026" else "WARNING"))
+    checks.append(("WhatsApp token configured", "PASS" if bool(WHATSAPP_TOKEN) else "WARNING"))
+    checks.append(("Verify token configured", "PASS" if bool(VERIFY_TOKEN) else "WARNING"))
+    checks.append(("Data folder writable", "PASS" if os.access(os.path.dirname(CUSTOMERS_FILE) or '.', os.W_OK) else "FAIL"))
+    checks.append(("Audit log active", "PASS" if os.path.exists(AUDIT_FILE) else "WARNING"))
+    rows = ''.join(f"<tr><td>{_safe_html(name)}</td><td><span class='badge'>{status}</span></td></tr>" for name,status in checks)
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Security Hardening</h1>{_phase8_nav()}<table><tr><th>Check</th><th>Status</th></tr>{rows}</table><p class='muted'>Before live production, change DASHBOARD_KEY in .env and never expose WhatsApp token publicly.</p></body></html>""")
+
+
+@app.get("/final/errors", response_class=HTMLResponse)
+async def final_errors(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    errors = _json_load(ERROR_LOG_FILE, [])
+    rows = ''.join(f"<tr><td>{_safe_html(e.get('time'))}</td><td>{_safe_html(e.get('area'))}</td><td>{_safe_html(e.get('message'))}</td></tr>" for e in errors[-100:][::-1]) or "<tr><td colspan='3'>No manual error logs yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Error Logging</h1>{_phase8_nav()}<div class='card'><form method='post' action='/final/errors/add?key={_safe_html(DASHBOARD_KEY)}'><label>Area</label><input name='area' placeholder='Dashboard / WhatsApp / Orders'><br><br><label>Error Note</label><textarea name='message'></textarea><br><br><button>Save Error Note</button></form></div><br><table><tr><th>Time</th><th>Area</th><th>Message</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/final/errors/add")
+async def final_errors_add(key: str = "", area: str = Form(""), message: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    errors = _json_load(ERROR_LOG_FILE, [])
+    errors.append({"time": datetime.utcnow().isoformat()+"Z", "area": area, "message": message})
+    _json_save(ERROR_LOG_FILE, errors); _audit("error_note_added", {"area": area})
+    return RedirectResponse(url=f"/final/errors?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/final/deployment", response_class=HTMLResponse)
+async def final_deployment(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    default_items = {
+        "env_secure": {"label":"Set secure .env keys", "done": False},
+        "webhook_live": {"label":"Meta webhook live verified", "done": False},
+        "backup_test": {"label":"Backup and restore tested", "done": False},
+        "mobile_test": {"label":"Mobile dashboard tested", "done": False},
+        "team_training": {"label":"Team training completed", "done": False},
+        "data_export": {"label":"Final data export downloaded", "done": False},
+    }
+    items = _json_load(DEPLOYMENT_CHECKLIST_FILE, default_items)
+    rows = ''.join(f"<tr><td>{_safe_html(v.get('label'))}</td><td>{'✅ Done' if v.get('done') else '⬜ Pending'}</td><td><form method='post' action='/final/deployment/toggle?key={_safe_html(DASHBOARD_KEY)}'><input type='hidden' name='item_id' value='{_safe_html(k)}'><button>Toggle</button></form></td></tr>" for k,v in items.items())
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Deployment Checklist</h1>{_phase8_nav()}<table><tr><th>Item</th><th>Status</th><th>Action</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/final/deployment/toggle")
+async def final_deployment_toggle(key: str = "", item_id: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    default = _json_load(DEPLOYMENT_CHECKLIST_FILE, {})
+    if item_id in default:
+        default[item_id]["done"] = not default[item_id].get("done", False)
+        default[item_id]["updated_at"] = datetime.utcnow().isoformat()+"Z"
+    _json_save(DEPLOYMENT_CHECKLIST_FILE, default); _audit("deployment_check_toggled", {"item_id": item_id})
+    return RedirectResponse(url=f"/final/deployment?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/final/docs", response_class=HTMLResponse)
+async def final_docs(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    docs = [
+        ("CRM", "Use /dashboard to view leads, customer profiles, notes, follow-ups and assignments."),
+        ("Sales", "Use quotation and order pages to move lead from enquiry to confirmed order."),
+        ("Inventory", "Use inventory dashboard for stones, materials, stock in/out and low stock alerts."),
+        ("Team", "Use enterprise users and roles to prepare staff access planning."),
+        ("Final", "Use this Phase 8 section for analytics, security checks, deployment and export."),
+    ]
+    rows = ''.join(f"<tr><td><b>{_safe_html(a)}</b></td><td>{_safe_html(b)}</td></tr>" for a,b in docs)
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{_phase8_style()}</head><body><h1>Documentation</h1>{_phase8_nav()}<table><tr><th>Module</th><th>How to Use</th></tr>{rows}</table><br><div class='card'><h2>Version Notes</h2><p>Current build: v8.5. Phase 8 adds final polish, analytics, security hardening, error log, deployment checklist and documentation.</p></div></body></html>""")
+
+
+@app.get("/final/export")
+async def final_export(key: str = ""):
+    if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version":"8.5.0", "metrics": _phase8_metrics(), "ui_settings": _json_load(FINAL_UI_SETTINGS_FILE, {}), "deployment": _json_load(DEPLOYMENT_CHECKLIST_FILE, {}), "security_note":"Change default keys before production."})
+
+
+# ── Health check ──────────────────────────────────────────────────────────────
+@app.get("/")
+async def health():
+    return {
+        "service": "RH Business OS — WhatsApp AI Bot",
+        "version": "8.5.0",
+        "status":  "running",
+        "phase": "Phase 8 Final Polish",
     }
