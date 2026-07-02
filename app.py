@@ -51,7 +51,7 @@ ASSIGNEES = [name.strip() for name in os.getenv("CRM_ASSIGNEES", "Shifa,Hasan,Aw
 PIPELINE_STAGES = ["NEW", "CONTACTED", "QUALIFIED", "QUOTE_PENDING", "QUOTE_SENT", "SAMPLE", "ORDER_CONFIRMED", "DISPATCHED", "CLOSED", "LOST"]
 TASK_STATUSES = ["OPEN", "IN_PROGRESS", "DONE"]
 
-# v4.6-v5.5 module files
+# v4.6-v6.5 module files
 DOCUMENTS_FILE = os.getenv("DOCUMENTS_FILE", "data/documents.json")
 DESIGN_REQUESTS_FILE = os.getenv("DESIGN_REQUESTS_FILE", "data/design_requests.json")
 APPROVALS_FILE = os.getenv("APPROVALS_FILE", "data/approvals.json")
@@ -134,9 +134,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v5.5",
+    title="RH Business OS — WhatsApp AI Bot v6.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="5.5.0",
+    version="6.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -2587,7 +2587,7 @@ async def save_settings(key: str = "", business_name: str = Form(""), default_cu
     return RedirectResponse(url=f"/settings?key={DASHBOARD_KEY}", status_code=303)
 
 
-# ── v4.6 to v5.5 Enterprise Growth Pack ──────────────────────────────────────
+# ── v4.6 to v6.5 Enterprise Growth Pack ──────────────────────────────────────
 
 def _audit(action: str, detail: dict | None = None) -> None:
     data = _json_load(AUDIT_FILE, [])
@@ -2603,10 +2603,10 @@ async def growth_home(key: str = ""):
         ("Approvals v4.8", "/approvals"), ("Dispatch v4.9", "/dispatch"),
         ("Delivery Proof v5.0", "/delivery-proof"), ("Payment Reminders v5.1", "/payment-reminders"),
         ("Broadcast Queue v5.2", "/broadcast-queue"), ("Data Export v5.3", "/data-export"),
-        ("Audit Log v5.4", "/audit"), ("System Status v5.5", "/system-status"),
+        ("Audit Log v5.4", "/audit"), ("System Status v6.5", "/system-status"),
     ]
     cards = "".join(f"<a class='card' href='{u}?key={_safe_html(DASHBOARD_KEY)}'>{t}</a>" for t,u in links)
-    return HTMLResponse(content=f"""<!doctype html><html><head><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}}.card{{display:block;background:white;padding:20px;border-radius:14px;border:1px solid #eee;color:#111;text-decoration:none;font-weight:800}}</style></head><body><h1>RH Business OS Growth Pack v5.5</h1><p><a href='/dashboard?key={_safe_html(DASHBOARD_KEY)}'>Dashboard</a> · <a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Ops</a></p><div class='grid'>{cards}</div></body></html>""")
+    return HTMLResponse(content=f"""<!doctype html><html><head><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}}.card{{display:block;background:white;padding:20px;border-radius:14px;border:1px solid #eee;color:#111;text-decoration:none;font-weight:800}}</style></head><body><h1>RH Business OS Growth Pack v6.5</h1><p><a href='/dashboard?key={_safe_html(DASHBOARD_KEY)}'>Dashboard</a> · <a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Ops</a></p><div class='grid'>{cards}</div></body></html>""")
 
 
 @app.get("/documents", response_class=HTMLResponse)
@@ -2717,7 +2717,7 @@ async def save_broadcast_queue(key: str = "", audience: str = Form(""), schedule
 async def data_export(key: str = ""):
     if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
     bundle = {
-        "exported_at": datetime.utcnow().isoformat()+"Z", "version": "5.5.0",
+        "exported_at": datetime.utcnow().isoformat()+"Z", "version": "6.5.0",
         "customers": _load_customers(), "documents": _json_load(DOCUMENTS_FILE, {}),
         "design_requests": _json_load(DESIGN_REQUESTS_FILE, {}), "approvals": _json_load(APPROVALS_FILE, {}),
         "dispatch": _json_load(DISPATCH_FILE, {}), "payment_reminders": _json_load(PAYMENT_REMINDERS_FILE, {}),
@@ -2742,7 +2742,192 @@ async def system_status_page(key: str = ""):
     for name,path in checks:
         exists=os.path.exists(path); size=os.path.getsize(path) if exists else 0
         rows += f"<tr><td>{_safe_html(name)}</td><td>{_safe_html(path)}</td><td>{'OK' if exists else 'NEW'}</td><td>{size}</td></tr>"
-    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>System Status v5.5</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Module</th><th>File</th><th>Status</th><th>Size Bytes</th></tr>{rows}</table></body></html>""")
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>System Status v6.5</h1><p><a href='/growth?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Module</th><th>File</th><th>Status</th><th>Size Bytes</th></tr>{rows}</table></body></html>""")
+
+
+
+
+# ── Phase 6: AI & Automation Pack v5.6-v6.5 ───────────────────────────────────
+# Safe AI layer: rule-based suggestions first, no paid API required.
+AI_SETTINGS_FILE = os.getenv("AI_SETTINGS_FILE", "data/ai_settings.json")
+AI_SUGGESTIONS_FILE = os.getenv("AI_SUGGESTIONS_FILE", "data/ai_suggestions.json")
+LEAD_SCORES_FILE = os.getenv("LEAD_SCORES_FILE", "data/lead_scores.json")
+AUTOMATIONS_FILE = os.getenv("AUTOMATIONS_FILE", "data/automations.json")
+SMART_REMINDERS_FILE = os.getenv("SMART_REMINDERS_FILE", "data/smart_reminders.json")
+AUTO_QUOTES_FILE = os.getenv("AUTO_QUOTES_FILE", "data/auto_quote_suggestions.json")
+
+
+def _ai_settings() -> dict:
+    defaults = {
+        "mode": "SAFE_RULE_BASED",
+        "business_name": "Rhinestone Heritage",
+        "default_tone": "professional_friendly",
+        "auto_send_enabled": False,
+        "auto_followup_enabled": False,
+        "lead_score_threshold_hot": 70,
+        "lead_score_threshold_warm": 40,
+    }
+    data = _json_load(AI_SETTINGS_FILE, {})
+    defaults.update(data if isinstance(data, dict) else {})
+    return defaults
+
+
+def _lead_score(customer: dict) -> tuple[int, list[str]]:
+    score = 10
+    reasons = []
+    buyer = (customer.get("buyer_type") or "").lower()
+    status = customer.get("lead_status") or ""
+    msg = (customer.get("last_message") or "").lower()
+    count = int(customer.get("message_count") or 0)
+
+    if buyer == "wholesaler": score += 25; reasons.append("Wholesaler/manufacturer lead")
+    if status in ("QUALIFIED_LEAD", "ORDER_POSSIBLE"): score += 25; reasons.append("Qualified/order possible status")
+    if customer.get("is_hot_lead") is True: score += 20; reasons.append("Marked hot by team")
+    if count >= 3: score += 10; reasons.append("Multiple messages")
+    if any(w in msg for w in ["qty", "quantity", "moq", "pcs", "piece", "price", "rate", "sample", "order"]):
+        score += 15; reasons.append("Buying intent words found")
+    if customer.get("followup_at") and not customer.get("followup_done_at"):
+        score += 5; reasons.append("Follow-up pending")
+    score = max(0, min(100, score))
+    if not reasons:
+        reasons.append("New lead with limited information")
+    return score, reasons
+
+
+def _suggest_reply(customer: dict) -> str:
+    buyer = (customer.get("buyer_type") or "unknown").lower()
+    status = customer.get("lead_status") or ""
+    last = customer.get("last_message") or ""
+    if buyer == "wholesaler" and status in ("WAITING_DESIGN", "WAITING_MOQ"):
+        return ("Hello 👋 Thank you for contacting Rhinestone Heritage. Please share the design reference image and approximate quantity/MOQ. "
+                "Our team will suggest the best rhinestone transfer sticker options with pricing.")
+    if status == "QUALIFIED_LEAD":
+        return ("Thank you for sharing the details. We are checking your requirement and will share the best price/quotation shortly. 🙏")
+    if "price" in last.lower() or "rate" in last.lower():
+        return ("Sure. Please share design size, stone color, and quantity required. Based on that we will calculate the best rate for you.")
+    if buyer in ("retailer", "personal"):
+        return MSG_RETAIL_PERSONAL
+    return ("Hello 👋 Thank you for reaching out to Rhinestone Heritage. Please share your requirement, design reference and quantity so our team can help you quickly.")
+
+
+def _suggest_quote(customer: dict) -> dict:
+    buyer = (customer.get("buyer_type") or "unknown").lower()
+    msg = (customer.get("last_message") or "").lower()
+    qty = 100
+    for token in msg.replace(",", " ").split():
+        if token.isdigit():
+            n = int(token)
+            if 10 <= n <= 100000:
+                qty = n; break
+    product = "Custom Rhinestone Transfer Sticker"
+    if "shirt" in msg: product = "Rhinestone Shirt Transfer"
+    if "abaya" in msg: product = "Rhinestone Abaya Transfer"
+    if buyer == "wholesaler" and qty >= 500:
+        rate = 85
+    elif buyer == "wholesaler":
+        rate = 120
+    else:
+        rate = 180
+    return {"product_name": product, "suggested_qty": qty, "suggested_rate": rate, "estimated_total": qty * rate, "note": "Final price depends on design size, stone count and colors."}
+
+
+def _automation_due_today(customer: dict) -> bool:
+    today = datetime.utcnow().date().isoformat()
+    value = str(customer.get("followup_at") or customer.get("followup_date") or "")
+    return value.startswith(today)
+
+
+@app.get("/ai", response_class=HTMLResponse)
+async def ai_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers()
+    settings = _ai_settings()
+    scored = []
+    for c in customers.values():
+        s, reasons = _lead_score(c); scored.append((s, reasons, c))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    hot = sum(1 for s,_,__ in scored if s >= int(settings.get('lead_score_threshold_hot',70)))
+    warm = sum(1 for s,_,__ in scored if 40 <= s < int(settings.get('lead_score_threshold_hot',70)))
+    due = sum(1 for _,__,c in scored if _automation_due_today(c))
+    rows = "".join(f"<tr><td><a href='/customer/{_safe_html(c.get('phone_number'))}?key={_safe_html(DASHBOARD_KEY)}'>{_safe_html(c.get('phone_number'))}</a></td><td>{s}</td><td>{_safe_html(c.get('buyer_type'))}</td><td>{_safe_html(c.get('lead_status'))}</td><td>{_safe_html(', '.join(reasons))}</td><td><a href='/ai/customer/{_safe_html(c.get('phone_number'))}?key={_safe_html(DASHBOARD_KEY)}'>Open AI</a></td></tr>" for s,reasons,c in scored[:100]) or "<tr><td colspan='6'>No leads yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>AI Automation</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}}a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}}.cards{{display:flex;gap:12px;flex-wrap:wrap}}.card{{background:white;border:1px solid #e5e5e5;border-radius:14px;padding:16px}}table{{width:100%;border-collapse:collapse;background:white;margin-top:16px}}th,td{{padding:10px;border-bottom:1px solid #eee;text-align:left}}th{{background:#111;color:white}}</style></head><body><h1>Phase 6 — AI & Automation v6.5</h1><p><a class='btn' href='/dashboard?key={_safe_html(DASHBOARD_KEY)}'>CRM</a> <a class='btn' href='/ai/settings?key={_safe_html(DASHBOARD_KEY)}'>AI Settings</a> <a class='btn' href='/ai/automation?key={_safe_html(DASHBOARD_KEY)}'>Automation Queue</a></p><div class='cards'><div class='card'><b>AI Mode</b><br>{_safe_html(settings.get('mode'))}</div><div class='card'><b>Hot AI Leads</b><br>{hot}</div><div class='card'><b>Warm Leads</b><br>{warm}</div><div class='card'><b>Due Today</b><br>{due}</div><div class='card'><b>Auto Send</b><br>{'OFF' if not settings.get('auto_send_enabled') else 'ON'}</div></div><h2>Smart Lead Scores</h2><table><tr><th>Phone</th><th>Score</th><th>Buyer</th><th>Status</th><th>Reasons</th><th>Action</th></tr>{rows}</table></body></html>""")
+
+
+@app.get("/ai/customer/{phone}", response_class=HTMLResponse)
+async def ai_customer_page(phone: str, key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers(); c = customers.get(phone)
+    if not c: return HTMLResponse(content="Customer not found", status_code=404)
+    score, reasons = _lead_score(c); reply = _suggest_reply(c); quote = _suggest_quote(c)
+    suggestions = _json_load(AI_SUGGESTIONS_FILE, {})
+    sid = _now_id("AIS")
+    suggestions[sid] = {"suggestion_id": sid, "phone": phone, "reply": reply, "score": score, "reasons": reasons, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(AI_SUGGESTIONS_FILE, suggestions)
+    quotes = _json_load(AUTO_QUOTES_FILE, {}); quotes[sid] = {"suggestion_id": sid, "phone": phone, **quote, "created_at": datetime.utcnow().isoformat()+"Z"}; _json_save(AUTO_QUOTES_FILE, quotes)
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>AI Sales Assistant</h1><p><a href='/ai?key={_safe_html(DASHBOARD_KEY)}'>Back to AI</a> | <a href='/customer/{_safe_html(phone)}?key={_safe_html(DASHBOARD_KEY)}'>Customer Profile</a></p><div style='background:white;padding:18px;border-radius:14px'><h2>{_safe_html(phone)}</h2><p><b>Lead Score:</b> {score}/100</p><p><b>Reasons:</b> {_safe_html(', '.join(reasons))}</p><h3>AI Reply Suggestion</h3><form method='post' action='/ai/customer/{_safe_html(phone)}/send?key={_safe_html(DASHBOARD_KEY)}'><textarea name='message' style='width:100%;min-height:150px'>{_safe_html(reply)}</textarea><br><br><button style='background:#111;color:white;padding:10px 14px;border:0;border-radius:10px'>Send This WhatsApp Reply</button></form><h3>Auto Quote Suggestion</h3><p><b>Product:</b> {_safe_html(quote['product_name'])}</p><p><b>Qty:</b> {quote['suggested_qty']} | <b>Rate:</b> ₹{quote['suggested_rate']} | <b>Total:</b> ₹{quote['estimated_total']}</p><p>{_safe_html(quote['note'])}</p><form method='post' action='/ai/customer/{_safe_html(phone)}/reminder?key={_safe_html(DASHBOARD_KEY)}'><h3>Smart Reminder</h3><input type='datetime-local' name='remind_at'><input name='note' placeholder='Reminder note' style='width:50%;padding:10px'><button>Save Reminder</button></form></div></body></html>""")
+
+
+@app.post("/ai/customer/{phone}/send")
+async def ai_send_customer_reply(phone: str, key: str = "", message: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    if not message.strip(): return HTMLResponse(content="Message empty", status_code=400)
+    success = await whatsapp.send_text_message(to=phone, body=message.strip())
+    customers = _load_customers()
+    if phone in customers:
+        customers[phone]["last_ai_reply_sent_at"] = datetime.utcnow().isoformat()+"Z"
+        customers[phone]["last_ai_reply"] = message.strip()
+        _save_customers(customers)
+    _append_message({"message_id": _now_id("OUTAI"), "from": "RH_BUSINESS_OS", "to": phone, "timestamp": str(int(datetime.utcnow().timestamp())), "received_at": datetime.utcnow().isoformat()+"Z", "type": "outbound_ai_suggestion", "body": message.strip(), "raw": {"manual_ai_send": True, "success": success}})
+    _audit("ai_reply_sent" if success else "ai_reply_failed", {"phone": phone})
+    return RedirectResponse(url=f"/ai/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/ai/customer/{phone}/reminder")
+async def ai_save_reminder(phone: str, key: str = "", remind_at: str = Form(""), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(SMART_REMINDERS_FILE, {}); rid = _now_id("REM")
+    data[rid] = {"reminder_id": rid, "phone": phone, "remind_at": remind_at, "note": note, "status": "PENDING", "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(SMART_REMINDERS_FILE, data); _audit("smart_reminder_saved", {"phone": phone, "reminder_id": rid})
+    return RedirectResponse(url=f"/ai/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/ai/automation", response_class=HTMLResponse)
+async def ai_automation_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers(); reminders = _json_load(SMART_REMINDERS_FILE, {})
+    rows = ""
+    for c in customers.values():
+        score, reasons = _lead_score(c)
+        if score >= 40 or _automation_due_today(c):
+            phone = c.get('phone_number')
+            rows += f"<tr><td>{_safe_html(phone)}</td><td>{score}</td><td>{_safe_html(c.get('lead_status'))}</td><td>{_safe_html(_suggest_reply(c))}</td><td><a href='/ai/customer/{_safe_html(phone)}?key={_safe_html(DASHBOARD_KEY)}'>Review</a></td></tr>"
+    rem_rows = "".join(f"<tr><td>{_safe_html(r.get('phone'))}</td><td>{_safe_html(r.get('remind_at'))}</td><td>{_safe_html(r.get('status'))}</td><td>{_safe_html(r.get('note'))}</td></tr>" for r in reminders.values()) or "<tr><td colspan='4'>No smart reminders.</td></tr>"
+    if not rows: rows = "<tr><td colspan='5'>No automation suggestions right now.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Automation Queue v6.5</h1><p><b>Safe mode:</b> Auto-send is OFF by default. Review each suggestion before sending.</p><p><a href='/ai?key={_safe_html(DASHBOARD_KEY)}'>Back to AI</a></p><h2>Suggested Follow-ups</h2><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Phone</th><th>Score</th><th>Status</th><th>Suggested Reply</th><th>Action</th></tr>{rows}</table><h2>Smart Reminders</h2><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Phone</th><th>Time</th><th>Status</th><th>Note</th></tr>{rem_rows}</table></body></html>""")
+
+
+@app.get("/ai/settings", response_class=HTMLResponse)
+async def ai_settings_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    s = _ai_settings()
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>AI Settings v6.5</h1><p><a href='/ai?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/ai/settings/save?key={_safe_html(DASHBOARD_KEY)}' style='background:white;padding:18px;border-radius:14px;max-width:650px'><label>Mode</label><select name='mode'><option {'selected' if s.get('mode')=='SAFE_RULE_BASED' else ''}>SAFE_RULE_BASED</option><option {'selected' if s.get('mode')=='OPENAI_READY_DISABLED' else ''}>OPENAI_READY_DISABLED</option></select><br><br><label>Default Tone</label><input name='default_tone' value='{_safe_html(s.get('default_tone'))}' style='width:100%;padding:10px'><br><br><label>Hot Lead Score Threshold</label><input name='lead_score_threshold_hot' value='{_safe_html(s.get('lead_score_threshold_hot'))}'><br><br><label>Warm Lead Score Threshold</label><input name='lead_score_threshold_warm' value='{_safe_html(s.get('lead_score_threshold_warm'))}'><br><br><label><input type='checkbox' name='auto_send_enabled' value='true' {'checked' if s.get('auto_send_enabled') else ''}> Auto-send enabled (not recommended)</label><br><label><input type='checkbox' name='auto_followup_enabled' value='true' {'checked' if s.get('auto_followup_enabled') else ''}> Auto follow-up enabled</label><br><br><button style='background:#111;color:white;padding:10px 14px;border:0;border-radius:10px'>Save Settings</button></form></body></html>""")
+
+
+@app.post("/ai/settings/save")
+async def ai_settings_save(key: str = "", mode: str = Form("SAFE_RULE_BASED"), default_tone: str = Form("professional_friendly"), lead_score_threshold_hot: str = Form("70"), lead_score_threshold_warm: str = Form("40"), auto_send_enabled: str = Form(""), auto_followup_enabled: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = {"mode": mode, "default_tone": default_tone, "lead_score_threshold_hot": int(lead_score_threshold_hot or 70), "lead_score_threshold_warm": int(lead_score_threshold_warm or 40), "auto_send_enabled": auto_send_enabled == "true", "auto_followup_enabled": auto_followup_enabled == "true", "updated_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(AI_SETTINGS_FILE, data); _audit("ai_settings_saved", data)
+    return RedirectResponse(url=f"/ai/settings?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/ai/export")
+async def ai_export(key: str = ""):
+    if key != DASHBOARD_KEY: return JSONResponse(content={"error":"Access denied"}, status_code=401)
+    customers = _load_customers(); lead_scores = {}
+    for phone,c in customers.items():
+        score, reasons = _lead_score(c); lead_scores[phone] = {"score": score, "reasons": reasons}
+    return JSONResponse(content={"exported_at": datetime.utcnow().isoformat()+"Z", "version": "6.5.0", "lead_scores": lead_scores, "ai_settings": _ai_settings(), "suggestions": _json_load(AI_SUGGESTIONS_FILE, {}), "smart_reminders": _json_load(SMART_REMINDERS_FILE, {}), "auto_quote_suggestions": _json_load(AUTO_QUOTES_FILE, {})})
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -2750,6 +2935,6 @@ async def system_status_page(key: str = ""):
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "5.5.0",
+        "version": "6.5.0",
         "status":  "running",
     }
