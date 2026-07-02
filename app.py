@@ -126,7 +126,7 @@ MSG_FOLLOWUP_WHOLESALER = (
 app = FastAPI(
     title="RH Business OS — WhatsApp AI Bot v3.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="3.5.0",
+    version="4.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -2328,11 +2328,260 @@ async def export_inventory_ledger(key: str = ""):
 
 
 
+
+
+# ── Operations + HR + Reports Module v3.6-v4.5 ───────────────────────────────
+SUPPLIERS_FILE = os.getenv("SUPPLIERS_FILE", "data/suppliers.json")
+PURCHASES_FILE = os.getenv("PURCHASES_FILE", "data/purchases.json")
+EXPENSES_FILE = os.getenv("EXPENSES_FILE", "data/expenses.json")
+STAFF_FILE = os.getenv("STAFF_FILE", "data/staff.json")
+ATTENDANCE_FILE = os.getenv("ATTENDANCE_FILE", "data/attendance.json")
+SALARY_FILE = os.getenv("SALARY_FILE", "data/salary.json")
+CAMPAIGNS_FILE = os.getenv("CAMPAIGNS_FILE", "data/campaigns.json")
+SETTINGS_FILE = os.getenv("SETTINGS_FILE", "data/settings.json")
+
+
+def _json_load(path: str, default):
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.error("Failed to load %s: %s", path, exc)
+        return default
+
+
+def _json_save(path: str, data) -> None:
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error("Failed to save %s: %s", path, exc)
+
+
+def _now_id(prefix: str) -> str:
+    return f"{prefix}-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+
+
+def _safe_html(value):
+    if value is None:
+        return ""
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+
+def _money(value):
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+@app.get("/ops", response_class=HTMLResponse)
+async def operations_home(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    suppliers = _json_load(SUPPLIERS_FILE, {})
+    purchases = _json_load(PURCHASES_FILE, {})
+    expenses = _json_load(EXPENSES_FILE, {})
+    staff = _json_load(STAFF_FILE, {})
+    attendance = _json_load(ATTENDANCE_FILE, [])
+    campaigns = _json_load(CAMPAIGNS_FILE, {})
+    po_open = sum(1 for p in purchases.values() if p.get("status") not in ("RECEIVED", "CANCELLED"))
+    monthly_expense = sum(_money(e.get("amount")) for e in expenses.values() if str(e.get("date", ""))[:7] == datetime.utcnow().strftime("%Y-%m"))
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>RH Ops</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}}.card{{background:#fff;border:1px solid #e5e5e5;border-radius:14px;padding:18px}}.v{{font-size:30px;font-weight:800}}a.btn{{display:inline-block;background:#111;color:#fff;padding:10px 14px;border-radius:10px;text-decoration:none;margin:4px}}</style></head><body>
+    <h1>RH Operations Hub</h1><p><a class='btn' href='/dashboard?key={_safe_html(DASHBOARD_KEY)}'>CRM</a> <a class='btn' href='/inventory?key={_safe_html(DASHBOARD_KEY)}'>Inventory</a> <a class='btn' href='/reports?key={_safe_html(DASHBOARD_KEY)}'>Reports</a></p>
+    <div class='cards'><div class='card'>Suppliers<div class='v'>{len(suppliers)}</div></div><div class='card'>Open Purchase Orders<div class='v'>{po_open}</div></div><div class='card'>This Month Expense<div class='v'>₹{monthly_expense:,.0f}</div></div><div class='card'>Staff<div class='v'>{len(staff)}</div></div><div class='card'>Attendance Records<div class='v'>{len(attendance)}</div></div><div class='card'>Campaigns<div class='v'>{len(campaigns)}</div></div></div>
+    <p style='margin-top:20px'><a class='btn' href='/suppliers?key={_safe_html(DASHBOARD_KEY)}'>Suppliers</a><a class='btn' href='/purchase-orders?key={_safe_html(DASHBOARD_KEY)}'>Purchase Orders</a><a class='btn' href='/expenses?key={_safe_html(DASHBOARD_KEY)}'>Expenses</a><a class='btn' href='/staff?key={_safe_html(DASHBOARD_KEY)}'>Staff</a><a class='btn' href='/attendance?key={_safe_html(DASHBOARD_KEY)}'>Attendance</a><a class='btn' href='/salary?key={_safe_html(DASHBOARD_KEY)}'>Salary</a><a class='btn' href='/campaigns?key={_safe_html(DASHBOARD_KEY)}'>Campaigns</a><a class='btn' href='/settings?key={_safe_html(DASHBOARD_KEY)}'>Settings</a></p>
+    </body></html>""")
+
+
+@app.get("/suppliers", response_class=HTMLResponse)
+async def suppliers_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(SUPPLIERS_FILE, {})
+    rows = "".join(f"<tr><td>{_safe_html(s.get('name'))}</td><td>{_safe_html(s.get('phone'))}</td><td>{_safe_html(s.get('category'))}</td><td>{_safe_html(s.get('note'))}</td></tr>" for s in data.values()) or "<tr><td colspan='4'>No suppliers yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Suppliers v3.7</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/suppliers/save?key={_safe_html(DASHBOARD_KEY)}'><input name='name' placeholder='Supplier name' required> <input name='phone' placeholder='Phone'> <input name='category' placeholder='Category'> <input name='note' placeholder='Note'> <button>Save</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Name</th><th>Phone</th><th>Category</th><th>Note</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/suppliers/save")
+async def save_supplier(key: str = "", name: str = Form(""), phone: str = Form(""), category: str = Form(""), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(SUPPLIERS_FILE, {})
+    sid = _now_id("SUP")
+    data[sid] = {"supplier_id": sid, "name": name, "phone": phone, "category": category, "note": note, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(SUPPLIERS_FILE, data)
+    return RedirectResponse(url=f"/suppliers?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/purchase-orders", response_class=HTMLResponse)
+async def purchase_orders_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PURCHASES_FILE, {})
+    rows = "".join(f"<tr><td>{_safe_html(p.get('po_id'))}</td><td>{_safe_html(p.get('supplier'))}</td><td>{_safe_html(p.get('item'))}</td><td>{_safe_html(p.get('qty'))}</td><td>₹{_money(p.get('amount')):,.0f}</td><td>{_safe_html(p.get('status'))}</td></tr>" for p in data.values()) or "<tr><td colspan='6'>No purchase orders yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Purchase Orders v3.6</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/purchase-orders/save?key={_safe_html(DASHBOARD_KEY)}'><input name='supplier' placeholder='Supplier'><input name='item' placeholder='Item'><input name='qty' placeholder='Qty'><input name='amount' placeholder='Amount'><select name='status'><option>ORDERED</option><option>PARTIAL</option><option>RECEIVED</option><option>CANCELLED</option></select><button>Save PO</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>PO ID</th><th>Supplier</th><th>Item</th><th>Qty</th><th>Amount</th><th>Status</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/purchase-orders/save")
+async def save_purchase_order(key: str = "", supplier: str = Form(""), item: str = Form(""), qty: str = Form(""), amount: str = Form(""), status: str = Form("ORDERED")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(PURCHASES_FILE, {})
+    pid = _now_id("PO")
+    data[pid] = {"po_id": pid, "supplier": supplier, "item": item, "qty": qty, "amount": _money(amount), "status": status, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(PURCHASES_FILE, data)
+    return RedirectResponse(url=f"/purchase-orders?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/expenses", response_class=HTMLResponse)
+async def expenses_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(EXPENSES_FILE, {})
+    total = sum(_money(e.get('amount')) for e in data.values())
+    rows = "".join(f"<tr><td>{_safe_html(e.get('date'))}</td><td>{_safe_html(e.get('category'))}</td><td>₹{_money(e.get('amount')):,.0f}</td><td>{_safe_html(e.get('note'))}</td></tr>" for e in data.values()) or "<tr><td colspan='4'>No expenses yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Expense Tracker v3.8</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a> | Total ₹{total:,.0f}</p><form method='post' action='/expenses/save?key={_safe_html(DASHBOARD_KEY)}'><input type='date' name='date'><input name='category' placeholder='Category'><input name='amount' placeholder='Amount'><input name='note' placeholder='Note'><button>Save Expense</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Date</th><th>Category</th><th>Amount</th><th>Note</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/expenses/save")
+async def save_expense(key: str = "", date: str = Form(""), category: str = Form(""), amount: str = Form(""), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(EXPENSES_FILE, {})
+    eid = _now_id("EXP")
+    data[eid] = {"expense_id": eid, "date": date or datetime.utcnow().strftime('%Y-%m-%d'), "category": category, "amount": _money(amount), "note": note, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(EXPENSES_FILE, data)
+    return RedirectResponse(url=f"/expenses?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/staff", response_class=HTMLResponse)
+async def staff_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(STAFF_FILE, {})
+    rows = "".join(f"<tr><td>{_safe_html(s.get('name'))}</td><td>{_safe_html(s.get('role'))}</td><td>₹{_money(s.get('monthly_salary')):,.0f}</td><td>{_safe_html(s.get('phone'))}</td></tr>" for s in data.values()) or "<tr><td colspan='4'>No staff yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Staff Management v3.9</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/staff/save?key={_safe_html(DASHBOARD_KEY)}'><input name='name' placeholder='Name'><input name='role' placeholder='Role'><input name='monthly_salary' placeholder='Monthly salary'><input name='phone' placeholder='Phone'><button>Save Staff</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Name</th><th>Role</th><th>Salary</th><th>Phone</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/staff/save")
+async def save_staff(key: str = "", name: str = Form(""), role: str = Form(""), monthly_salary: str = Form(""), phone: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(STAFF_FILE, {})
+    sid = _now_id("STF")
+    data[sid] = {"staff_id": sid, "name": name, "role": role, "monthly_salary": _money(monthly_salary), "phone": phone, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(STAFF_FILE, data)
+    return RedirectResponse(url=f"/staff?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/attendance", response_class=HTMLResponse)
+async def attendance_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    staff = _json_load(STAFF_FILE, {})
+    data = _json_load(ATTENDANCE_FILE, [])
+    staff_opts = "".join(f"<option value='{_safe_html(s.get('name'))}'>{_safe_html(s.get('name'))}</option>" for s in staff.values())
+    rows = "".join(f"<tr><td>{_safe_html(a.get('date'))}</td><td>{_safe_html(a.get('staff_name'))}</td><td>{_safe_html(a.get('status'))}</td><td>{_safe_html(a.get('note'))}</td></tr>" for a in data[::-1]) or "<tr><td colspan='4'>No attendance yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Attendance v4.0</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/attendance/save?key={_safe_html(DASHBOARD_KEY)}'><input type='date' name='date'><select name='staff_name'>{staff_opts}</select><select name='status'><option>PRESENT</option><option>ABSENT</option><option>HALF_DAY</option><option>LEAVE</option></select><input name='note' placeholder='Note'><button>Save Attendance</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Date</th><th>Staff</th><th>Status</th><th>Note</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/attendance/save")
+async def save_attendance(key: str = "", date: str = Form(""), staff_name: str = Form(""), status: str = Form("PRESENT"), note: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(ATTENDANCE_FILE, [])
+    data.append({"date": date or datetime.utcnow().strftime('%Y-%m-%d'), "staff_name": staff_name, "status": status, "note": note, "created_at": datetime.utcnow().isoformat()+"Z"})
+    _json_save(ATTENDANCE_FILE, data)
+    return RedirectResponse(url=f"/attendance?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/salary", response_class=HTMLResponse)
+async def salary_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    staff = _json_load(STAFF_FILE, {})
+    records = _json_load(SALARY_FILE, {})
+    staff_opts = "".join(f"<option value='{_safe_html(s.get('name'))}'>{_safe_html(s.get('name'))}</option>" for s in staff.values())
+    rows = "".join(f"<tr><td>{_safe_html(r.get('month'))}</td><td>{_safe_html(r.get('staff_name'))}</td><td>₹{_money(r.get('salary')):,.0f}</td><td>₹{_money(r.get('advance')):,.0f}</td><td>₹{_money(r.get('net_payable')):,.0f}</td><td>{_safe_html(r.get('status'))}</td></tr>" for r in records.values()) or "<tr><td colspan='6'>No salary records.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Salary Module v4.1</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/salary/save?key={_safe_html(DASHBOARD_KEY)}'><input name='month' placeholder='2026-07'><select name='staff_name'>{staff_opts}</select><input name='salary' placeholder='Salary'><input name='advance' placeholder='Advance'><select name='status'><option>PENDING</option><option>PAID</option></select><button>Save Salary</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Month</th><th>Staff</th><th>Salary</th><th>Advance</th><th>Net</th><th>Status</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/salary/save")
+async def save_salary(key: str = "", month: str = Form(""), staff_name: str = Form(""), salary: str = Form(""), advance: str = Form("0"), status: str = Form("PENDING")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(SALARY_FILE, {})
+    rid = _now_id("SAL")
+    sal = _money(salary); adv = _money(advance)
+    data[rid] = {"salary_id": rid, "month": month or datetime.utcnow().strftime('%Y-%m'), "staff_name": staff_name, "salary": sal, "advance": adv, "net_payable": sal - adv, "status": status, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(SALARY_FILE, data)
+    return RedirectResponse(url=f"/salary?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/reports", response_class=HTMLResponse)
+async def reports_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    customers = _load_customers()
+    expenses = _json_load(EXPENSES_FILE, {})
+    purchases = _json_load(PURCHASES_FILE, {})
+    inventory = _json_load(INVENTORY_FILE, {"items": {}, "ledger": []}) if 'INVENTORY_FILE' in globals() else {"items": {}, "ledger": []}
+    hot = sum(1 for c in customers.values() if c.get('is_hot_lead'))
+    qualified = sum(1 for c in customers.values() if c.get('lead_status') == 'QUALIFIED_LEAD')
+    exp_total = sum(_money(e.get('amount')) for e in expenses.values())
+    po_total = sum(_money(p.get('amount')) for p in purchases.values())
+    low_stock = sum(1 for i in inventory.get('items', {}).values() if _money(i.get('current_stock')) <= _money(i.get('min_stock')))
+    return HTMLResponse(content=f"""<!doctype html><html><head><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}}.card{{background:white;border-radius:14px;padding:18px;border:1px solid #eee}}.v{{font-size:30px;font-weight:800}}</style></head><body><h1>Reports Dashboard v4.2</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><div class='cards'><div class='card'>Total Leads<div class='v'>{len(customers)}</div></div><div class='card'>Qualified Leads<div class='v'>{qualified}</div></div><div class='card'>Hot Leads<div class='v'>{hot}</div></div><div class='card'>Expense Total<div class='v'>₹{exp_total:,.0f}</div></div><div class='card'>Purchase Total<div class='v'>₹{po_total:,.0f}</div></div><div class='card'>Low Stock<div class='v'>{low_stock}</div></div></div><p><a href='/reports/export?key={_safe_html(DASHBOARD_KEY)}'>Download Summary CSV</a></p></body></html>""")
+
+
+@app.get("/reports/export")
+async def reports_export(key: str = ""):
+    if key != DASHBOARD_KEY: return JSONResponse(content={"error": "Access denied"}, status_code=401)
+    customers = _load_customers(); expenses = _json_load(EXPENSES_FILE, {}); purchases = _json_load(PURCHASES_FILE, {})
+    output = io.StringIO(); writer = csv.writer(output)
+    writer.writerow(["Metric", "Value"])
+    writer.writerow(["Total Leads", len(customers)])
+    writer.writerow(["Total Expenses", sum(_money(e.get('amount')) for e in expenses.values())])
+    writer.writerow(["Total Purchase Orders Amount", sum(_money(p.get('amount')) for p in purchases.values())])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition":"attachment; filename=rh_reports_summary.csv"})
+
+
+@app.get("/portal/approval/{phone}", response_class=HTMLResponse)
+async def customer_approval_portal(phone: str):
+    customers = _load_customers(); customer = customers.get(phone, {"phone_number": phone})
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><div style='max-width:650px;margin:auto;background:white;padding:24px;border-radius:16px'><h1>Rhinestone Heritage Approval Portal v4.3</h1><p>Customer: <b>{_safe_html(phone)}</b></p><p>Status: {_safe_html(customer.get('lead_status',''))}</p><p>This page is ready for future design approval, quote approval and order tracking links.</p><a href='https://wa.me/{_safe_html(phone)}'>Open WhatsApp</a></div></body></html>""")
+
+
+@app.get("/campaigns", response_class=HTMLResponse)
+async def campaigns_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(CAMPAIGNS_FILE, {})
+    rows = "".join(f"<tr><td>{_safe_html(c.get('name'))}</td><td>{_safe_html(c.get('audience'))}</td><td>{_safe_html(c.get('status'))}</td><td>{_safe_html(c.get('message'))}</td></tr>" for c in data.values()) or "<tr><td colspan='4'>No campaigns yet.</td></tr>"
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Campaign Planner v4.4</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/campaigns/save?key={_safe_html(DASHBOARD_KEY)}'><input name='name' placeholder='Campaign name'><input name='audience' placeholder='Audience'><select name='status'><option>DRAFT</option><option>READY</option><option>SENT</option></select><input name='message' placeholder='Message'><button>Save Campaign</button></form><br><table border='1' cellpadding='8' style='border-collapse:collapse;background:white'><tr><th>Name</th><th>Audience</th><th>Status</th><th>Message</th></tr>{rows}</table></body></html>""")
+
+
+@app.post("/campaigns/save")
+async def save_campaign(key: str = "", name: str = Form(""), audience: str = Form(""), status: str = Form("DRAFT"), message: str = Form("")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(CAMPAIGNS_FILE, {})
+    cid = _now_id("CMP")
+    data[cid] = {"campaign_id": cid, "name": name, "audience": audience, "status": status, "message": message, "created_at": datetime.utcnow().isoformat()+"Z"}
+    _json_save(CAMPAIGNS_FILE, data)
+    return RedirectResponse(url=f"/campaigns?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(key: str = ""):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    data = _json_load(SETTINGS_FILE, {"business_name":"Rhinestone Heritage", "default_currency":"INR", "default_gst":"18"})
+    return HTMLResponse(content=f"""<!doctype html><html><body style='font-family:Arial;background:#f7f7f7;padding:24px'><h1>Business Settings v4.5</h1><p><a href='/ops?key={_safe_html(DASHBOARD_KEY)}'>Back</a></p><form method='post' action='/settings/save?key={_safe_html(DASHBOARD_KEY)}'><label>Business Name</label><input name='business_name' value='{_safe_html(data.get('business_name'))}'><br><br><label>Currency</label><input name='default_currency' value='{_safe_html(data.get('default_currency'))}'><br><br><label>Default GST %</label><input name='default_gst' value='{_safe_html(data.get('default_gst'))}'><br><br><button>Save Settings</button></form></body></html>""")
+
+
+@app.post("/settings/save")
+async def save_settings(key: str = "", business_name: str = Form(""), default_currency: str = Form("INR"), default_gst: str = Form("18")):
+    if key != DASHBOARD_KEY: return HTMLResponse(content="Access Denied", status_code=401)
+    _json_save(SETTINGS_FILE, {"business_name": business_name, "default_currency": default_currency, "default_gst": default_gst, "updated_at": datetime.utcnow().isoformat()+"Z"})
+    return RedirectResponse(url=f"/settings?key={DASHBOARD_KEY}", status_code=303)
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "3.5.0",
+        "version": "4.5.0",
         "status":  "running",
     }
