@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v0.8
+RH Business OS — WhatsApp AI Bot v0.9
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -113,9 +113,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.8",
+    title="RH Business OS — WhatsApp AI Bot v0.9",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="0.8.0",
+    version="0.9.0",
 )
 
 whatsapp = WhatsAppService(
@@ -518,6 +518,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     personal = sum(1 for c in rows if c.get("buyer_type") == "personal")
     qualified = sum(1 for c in rows if c.get("lead_status") == "QUALIFIED_LEAD")
     website_sent = sum(1 for c in rows if c.get("lead_status") == "WEBSITE_SENT")
+    hot_leads = sum(1 for c in rows if c.get("is_hot_lead") is True)
 
     query = (q or "").strip().lower()
 
@@ -531,6 +532,8 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
         rows = [c for c in rows if c.get("lead_status") == "QUALIFIED_LEAD"]
     elif filter == "website_sent":
         rows = [c for c in rows if c.get("lead_status") == "WEBSITE_SENT"]
+    elif filter == "hot":
+        rows = [c for c in rows if c.get("is_hot_lead") is True]
 
     if query:
         rows = [
@@ -748,6 +751,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
             <div class="card"><div class="card-title">Personal Buyer</div><div class="card-value">{personal}</div></div>
             <div class="card"><div class="card-title">Qualified Leads</div><div class="card-value">{qualified}</div></div>
             <div class="card"><div class="card-title">Website Sent</div><div class="card-value">{website_sent}</div></div>
+            <div class="card"><div class="card-title">Hot Leads</div><div class="card-value">{hot_leads}</div></div>
         </div>
 
         <div class="toolbar">
@@ -765,6 +769,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
                 {filter_link("Personal", "personal")}
                 {filter_link("Qualified", "qualified")}
                 {filter_link("Website Sent", "website_sent")}
+                {filter_link("Hot Leads", "hot")}
             </div>
         </div>
 
@@ -894,6 +899,29 @@ async def customer_profile(phone: str, key: str = ""):
                 <div class="label">Last Seen</div><div class="value">{esc(customer.get("last_seen"))}</div>
 
                 <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
+                <h3>Lead Controls</h3>
+                <form method="post" action="/customer/{esc(phone)}/status?key={esc(DASHBOARD_KEY)}">
+                    <select name="lead_status" style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;">
+                        <option value="WAITING_BUYER_TYPE">WAITING_BUYER_TYPE</option>
+                        <option value="WAITING_DESIGN">WAITING_DESIGN</option>
+                        <option value="WAITING_MOQ">WAITING_MOQ</option>
+                        <option value="QUALIFIED_LEAD">QUALIFIED_LEAD</option>
+                        <option value="WEBSITE_SENT">WEBSITE_SENT</option>
+                        <option value="FOLLOW_UP">FOLLOW_UP</option>
+                        <option value="ORDER_POSSIBLE">ORDER_POSSIBLE</option>
+                        <option value="CLOSED">CLOSED</option>
+                    </select>
+                    <br><br><button type="submit">Update Status</button>
+                </form>
+
+                <br>
+                <form method="post" action="/customer/{esc(phone)}/hot?key={esc(DASHBOARD_KEY)}">
+                    <input type="hidden" name="is_hot_lead" value="{'' if customer.get('is_hot_lead') else 'true'}">
+                    <button type="submit">{'Remove Hot Lead ⭐' if customer.get('is_hot_lead') else 'Mark Hot Lead ⭐'}</button>
+                </form>
+
+                <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
+
                 <h3>Internal Notes</h3>
                 <form method="post" action="/customer/{esc(phone)}/notes?key={esc(DASHBOARD_KEY)}">
                     <textarea name="notes" placeholder="Add customer notes here...">{esc(customer.get("notes") or "")}</textarea>
@@ -929,11 +957,44 @@ async def save_customer_notes(phone: str, key: str = "", notes: str = Form("")):
 
 
 
+@app.post("/customer/{phone}/status")
+async def update_customer_status(phone: str, key: str = "", lead_status: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+
+    customers[phone]["lead_status"] = lead_status
+    customers[phone]["status_updated_at"] = datetime.utcnow().isoformat() + "Z"
+    _save_customers(customers)
+
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/customer/{phone}/hot")
+async def update_hot_lead(phone: str, key: str = "", is_hot_lead: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+
+    customers[phone]["is_hot_lead"] = True if is_hot_lead == "true" else False
+    customers[phone]["hot_lead_updated_at"] = datetime.utcnow().isoformat() + "Z"
+    _save_customers(customers)
+
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.8.0",
+        "version": "0.9.0",
         "status":  "running",
     }
