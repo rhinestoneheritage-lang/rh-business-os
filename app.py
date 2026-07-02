@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v2.5
+RH Business OS — WhatsApp AI Bot v3.0
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -124,9 +124,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v2.5",
+    title="RH Business OS — WhatsApp AI Bot v3.0",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="2.5.0",
+    version="3.0.0",
 )
 
 whatsapp = WhatsAppService(
@@ -1829,11 +1829,274 @@ async def quotes_dashboard(key: str = "", status: str = "all"):
     <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Quotes Dashboard</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} .cards{{display:flex;gap:12px;flex-wrap:wrap}} .card{{background:white;padding:16px;border-radius:14px;border:1px solid #e5e5e5}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:16px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><div class='top'><h1>Quotes Dashboard</h1><p><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a> <a class='btn' href='/price-list?key={esc(DASHBOARD_KEY)}'>Price List</a></p></div><div class='cards'><div class='card'><b>Total Quotes</b><br>{len(rows)}</div><div class='card'><b>Total Quote Value</b><br>{_money(total_value)}</div></div><p><a href='/quotes?key={esc(DASHBOARD_KEY)}&status=all'>All</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=DRAFT'>Draft</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=QUOTE_SENT'>Sent</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=APPROVED'>Approved</a></p><table><thead><tr><th>Quote</th><th>Customer</th><th>Product</th><th>Total</th><th>Status</th><th>Created</th></tr></thead><tbody>{body}</tbody></table></body></html>
     """)
 
+
+
+# ── v2.6 to v3.0 Orders, Invoice, Payment, Production ───────────────────────
+ORDER_STATUSES = ["PENDING", "IN_PRODUCTION", "READY", "DISPATCHED", "DELIVERED", "CANCELLED"]
+PAYMENT_STATUSES = ["UNPAID", "PARTIAL", "PAID"]
+PRODUCTION_PRIORITIES = ["NORMAL", "HIGH", "URGENT"]
+
+
+def _generate_order_id(customer: dict) -> str:
+    count = len(customer.get("orders", [])) + 1
+    return f"ORD-{datetime.utcnow().strftime('%Y%m%d')}-{count:03d}"
+
+
+def _generate_invoice_no(customer: dict) -> str:
+    count = sum(1 for o in customer.get("orders", []) if o.get("invoice_no")) + 1
+    return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{count:03d}"
+
+
+def _order_total(order: dict) -> float:
+    try:
+        return float(order.get("total_amount") or 0)
+    except Exception:
+        return 0.0
+
+
+def _payment_summary(order: dict) -> dict:
+    total = _order_total(order)
+    paid = 0.0
+    for p in order.get("payments", []):
+        try:
+            paid += float(p.get("amount") or 0)
+        except Exception:
+            pass
+    balance = max(total - paid, 0.0)
+    if paid <= 0:
+        status = "UNPAID"
+    elif balance <= 0:
+        status = "PAID"
+    else:
+        status = "PARTIAL"
+    order["amount_paid"] = paid
+    order["balance_due"] = balance
+    order["payment_status"] = status
+    return {"total": total, "paid": paid, "balance": balance, "status": status}
+
+
+def _find_order(customer: dict, order_id: str):
+    for order in customer.get("orders", []):
+        if str(order.get("order_id")) == str(order_id):
+            return order
+    return None
+
+
+@app.post("/customer/{phone}/quote/{quote_id}/order/create")
+async def create_order_from_quote(phone: str, quote_id: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    q = _find_quote(customer, quote_id)
+    if not q:
+        return HTMLResponse(content="Quote not found", status_code=404)
+    q = _quote_total(q)
+    existing = [o for o in customer.get("orders", []) if o.get("quote_id") == quote_id]
+    if existing:
+        return RedirectResponse(url=f"/customer/{phone}/order/{existing[0].get('order_id')}?key={DASHBOARD_KEY}", status_code=303)
+    order_id = _generate_order_id(customer)
+    order = {
+        "order_id": order_id,
+        "quote_id": quote_id,
+        "product_name": q.get("product_name"),
+        "details": q.get("details"),
+        "qty": q.get("qty"),
+        "total_amount": q.get("total"),
+        "order_status": "PENDING",
+        "production_status": "PENDING",
+        "payment_status": "UNPAID",
+        "priority": "NORMAL",
+        "due_date": "",
+        "dispatch_details": "",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "payments": [],
+    }
+    customer.setdefault("orders", []).append(order)
+    q["status"] = "ORDER_CREATED"
+    q["order_id"] = order_id
+    customer["lead_status"] = "ORDER_CREATED"
+    customer["pipeline_stage"] = "ORDER_CONFIRMED"
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}/order/{order_id}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/customer/{phone}/orders", response_class=HTMLResponse)
+async def customer_orders(phone: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    rows = ""
+    for o in customer.get("orders", [])[::-1]:
+        _payment_summary(o)
+        rows += f"<tr><td><a href='/customer/{esc(phone)}/order/{esc(o.get('order_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(o.get('order_id'))}</a></td><td>{esc(o.get('product_name'))}</td><td>{esc(o.get('qty'))}</td><td>{_money(o.get('total_amount'))}</td><td>{esc(o.get('order_status'))}</td><td>{esc(o.get('payment_status'))}</td><td>{esc(o.get('created_at'))}</td></tr>"
+    if not rows:
+        rows = "<tr><td colspan='7' style='text-align:center;padding:24px;color:#777'>No orders yet.</td></tr>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Customer Orders</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><h1>Customer Orders</h1><p><a class='btn' href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>Back Customer</a> <a class='btn' href='/orders?key={esc(DASHBOARD_KEY)}'>All Orders</a></p><table><thead><tr><th>Order</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Payment</th><th>Created</th></tr></thead><tbody>{rows}</tbody></table></body></html>
+    """)
+
+
+@app.get("/customer/{phone}/order/{order_id}", response_class=HTMLResponse)
+async def view_order(phone: str, order_id: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    order = _find_order(customer, order_id)
+    if not order:
+        return HTMLResponse(content="Order not found", status_code=404)
+    pay = _payment_summary(order)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    status_options = ''.join(f"<option value='{s}' {'selected' if order.get('order_status')==s else ''}>{s}</option>" for s in ORDER_STATUSES)
+    priority_options = ''.join(f"<option value='{p}' {'selected' if order.get('priority')==p else ''}>{p}</option>" for p in PRODUCTION_PRIORITIES)
+    payment_rows = ''.join(f"<tr><td>{esc(p.get('date'))}</td><td>{_money(p.get('amount'))}</td><td>{esc(p.get('mode'))}</td><td>{esc(p.get('note'))}</td></tr>" for p in order.get('payments', [])) or "<tr><td colspan='4' style='color:#777'>No payments added.</td></tr>"
+    invoice_btn = f"<a class='btn' href='/customer/{esc(phone)}/order/{esc(order_id)}/invoice?key={esc(DASHBOARD_KEY)}'>Print Invoice</a>" if order.get('invoice_no') else f"<form style='display:inline' method='post' action='/customer/{esc(phone)}/order/{esc(order_id)}/invoice/create?key={esc(DASHBOARD_KEY)}'><button>Create Invoice</button></form>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Order {esc(order_id)}</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px}} .card{{background:white;border:1px solid #e5e5e5;border-radius:14px;padding:18px}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer}} input,select,textarea{{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;box-sizing:border-box}} table{{width:100%;border-collapse:collapse}} th,td{{padding:10px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}} @media(max-width:800px){{.grid{{grid-template-columns:1fr}}}}</style></head><body>
+    <h1>Order {esc(order_id)}</h1><p><a class='btn' href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>Customer</a> <a class='btn' href='/orders?key={esc(DASHBOARD_KEY)}'>Orders Dashboard</a> {invoice_btn}</p>
+    <div class='grid'><div class='card'><h2>Order Details</h2><p><b>Product:</b> {esc(order.get('product_name'))}<br><b>Details:</b> {esc(order.get('details'))}<br><b>Qty:</b> {esc(order.get('qty'))}<br><b>Total:</b> {_money(order.get('total_amount'))}<br><b>Paid:</b> {_money(pay['paid'])}<br><b>Balance:</b> {_money(pay['balance'])}<br><b>Payment:</b> {esc(pay['status'])}</p>
+    <form method='post' action='/customer/{esc(phone)}/order/{esc(order_id)}/update?key={esc(DASHBOARD_KEY)}'><label>Status</label><select name='order_status'>{status_options}</select><br><br><label>Priority</label><select name='priority'>{priority_options}</select><br><br><label>Due Date</label><input type='date' name='due_date' value='{esc(order.get('due_date'))}'><br><br><label>Dispatch Details</label><textarea name='dispatch_details'>{esc(order.get('dispatch_details'))}</textarea><br><br><button>Update Order</button></form></div>
+    <div class='card'><h2>Add Payment</h2><form method='post' action='/customer/{esc(phone)}/order/{esc(order_id)}/payment/add?key={esc(DASHBOARD_KEY)}'><label>Amount</label><input type='number' step='0.01' name='amount' required><br><br><label>Mode</label><input name='mode' placeholder='Cash / UPI / Bank'><br><br><label>Note</label><textarea name='note'></textarea><br><br><button>Add Payment</button></form><h3>Payment History</h3><table><thead><tr><th>Date</th><th>Amount</th><th>Mode</th><th>Note</th></tr></thead><tbody>{payment_rows}</tbody></table></div></div>
+    </body></html>
+    """)
+
+
+@app.post("/customer/{phone}/order/{order_id}/update")
+async def update_order(phone: str, order_id: str, key: str = "", order_status: str = Form("PENDING"), priority: str = Form("NORMAL"), due_date: str = Form(""), dispatch_details: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    order = _find_order(customer, order_id)
+    if not order:
+        return HTMLResponse(content="Order not found", status_code=404)
+    order["order_status"] = order_status if order_status in ORDER_STATUSES else order.get("order_status", "PENDING")
+    order["production_status"] = order["order_status"]
+    order["priority"] = priority if priority in PRODUCTION_PRIORITIES else "NORMAL"
+    order["due_date"] = due_date
+    order["dispatch_details"] = dispatch_details
+    order["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    if order["order_status"] == "DISPATCHED":
+        customer["pipeline_stage"] = "DISPATCHED"
+    elif order["order_status"] == "DELIVERED":
+        customer["pipeline_stage"] = "CLOSED"
+        customer["lead_status"] = "CLOSED"
+    _payment_summary(order)
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}/order/{order_id}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/customer/{phone}/order/{order_id}/payment/add")
+async def add_order_payment(phone: str, order_id: str, key: str = "", amount: str = Form("0"), mode: str = Form(""), note: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    order = _find_order(customer, order_id)
+    if not order:
+        return HTMLResponse(content="Order not found", status_code=404)
+    order.setdefault("payments", []).append({"amount": float(amount or 0), "mode": mode, "note": note, "date": datetime.utcnow().isoformat()+"Z"})
+    _payment_summary(order)
+    order["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}/order/{order_id}?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.post("/customer/{phone}/order/{order_id}/invoice/create")
+async def create_invoice(phone: str, order_id: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    order = _find_order(customer, order_id)
+    if not order:
+        return HTMLResponse(content="Order not found", status_code=404)
+    if not order.get("invoice_no"):
+        order["invoice_no"] = _generate_invoice_no(customer)
+        order["invoice_date"] = datetime.utcnow().strftime("%Y-%m-%d")
+        order["gst_percent"] = "0"
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}/order/{order_id}/invoice?key={DASHBOARD_KEY}", status_code=303)
+
+
+@app.get("/customer/{phone}/order/{order_id}/invoice", response_class=HTMLResponse)
+async def view_invoice(phone: str, order_id: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    order = _find_order(customer, order_id)
+    if not order:
+        return HTMLResponse(content="Order not found", status_code=404)
+    pay = _payment_summary(order)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Invoice {esc(order.get('invoice_no'))}</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .invoice{{background:white;max-width:850px;margin:auto;padding:30px;border-radius:14px}} .top{{display:flex;justify-content:space-between}} table{{width:100%;border-collapse:collapse;margin-top:22px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}} .total{{text-align:right;font-size:22px;font-weight:700}} button,a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0}} @media print{{.actions{{display:none}} body{{background:white}} .invoice{{box-shadow:none}}}}</style></head><body><div class='invoice'><div class='actions'><button onclick='window.print()'>Print / Save PDF</button> <a class='btn' href='/customer/{esc(phone)}/order/{esc(order_id)}?key={esc(DASHBOARD_KEY)}'>Back Order</a></div><div class='top'><div><h1>Rhinestone Heritage</h1><p>Invoice: <b>{esc(order.get('invoice_no'))}</b><br>Date: {esc(order.get('invoice_date'))}<br>Order: {esc(order_id)}</p></div><div><b>Bill To:</b><br>{esc(phone)}</div></div><table><thead><tr><th>Product</th><th>Details</th><th>Qty</th><th>Total</th></tr></thead><tbody><tr><td>{esc(order.get('product_name'))}</td><td>{esc(order.get('details'))}</td><td>{esc(order.get('qty'))}</td><td>{_money(order.get('total_amount'))}</td></tr></tbody></table><p class='total'>Grand Total: {_money(order.get('total_amount'))}</p><p><b>Paid:</b> {_money(pay['paid'])}<br><b>Balance Due:</b> {_money(pay['balance'])}<br><b>Payment Status:</b> {esc(pay['status'])}</p></div></body></html>
+    """)
+
+
+@app.get("/orders", response_class=HTMLResponse)
+async def orders_dashboard(key: str = "", status: str = "all"):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    rows = []
+    for c in _load_customers().values():
+        for o in c.get("orders", []):
+            _payment_summary(o)
+            if status == "all" or o.get("order_status") == status or o.get("payment_status") == status:
+                rows.append((c.get("phone_number"), o))
+    rows.sort(key=lambda x: x[1].get("created_at", ""), reverse=True)
+    body = ''.join(f"<tr><td><a href='/customer/{esc(phone)}/order/{esc(o.get('order_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(o.get('order_id'))}</a></td><td><a href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>{esc(phone)}</a></td><td>{esc(o.get('product_name'))}</td><td>{esc(o.get('qty'))}</td><td>{_money(o.get('total_amount'))}</td><td>{esc(o.get('order_status'))}</td><td>{esc(o.get('payment_status'))}</td><td>{esc(o.get('priority'))}</td><td>{esc(o.get('due_date'))}</td></tr>" for phone,o in rows) or "<tr><td colspan='9' style='text-align:center;padding:24px;color:#777'>No orders found.</td></tr>"
+    total_value = sum(_order_total(o) for _, o in rows)
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Orders Dashboard</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} .cards{{display:flex;gap:12px;flex-wrap:wrap}} .card{{background:white;padding:16px;border-radius:14px;border:1px solid #e5e5e5}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:16px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><div class='top'><h1>Orders Dashboard</h1><p><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>CRM</a> <a class='btn' href='/production?key={esc(DASHBOARD_KEY)}'>Production</a></p></div><div class='cards'><div class='card'><b>Total Orders</b><br>{len(rows)}</div><div class='card'><b>Total Value</b><br>{_money(total_value)}</div></div><p><a href='/orders?key={esc(DASHBOARD_KEY)}&status=all'>All</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=PENDING'>Pending</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=IN_PRODUCTION'>In Production</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=READY'>Ready</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=DISPATCHED'>Dispatched</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=UNPAID'>Unpaid</a></p><table><thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Payment</th><th>Priority</th><th>Due</th></tr></thead><tbody>{body}</tbody></table></body></html>
+    """)
+
+
+@app.get("/production", response_class=HTMLResponse)
+async def production_dashboard(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    rows = []
+    for c in _load_customers().values():
+        for o in c.get("orders", []):
+            if o.get("order_status") in ("PENDING", "IN_PRODUCTION", "READY"):
+                rows.append((c.get("phone_number"), o))
+    rows.sort(key=lambda x: (x[1].get("priority") != "URGENT", x[1].get("due_date", "")))
+    body = ''.join(f"<tr><td><a href='/customer/{esc(phone)}/order/{esc(o.get('order_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(o.get('order_id'))}</a></td><td>{esc(phone)}</td><td>{esc(o.get('product_name'))}</td><td>{esc(o.get('qty'))}</td><td>{esc(o.get('order_status'))}</td><td>{esc(o.get('priority'))}</td><td>{esc(o.get('due_date'))}</td></tr>" for phone,o in rows) or "<tr><td colspan='7' style='text-align:center;padding:24px;color:#777'>No active production jobs.</td></tr>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Production Dashboard</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:16px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><h1>Production Dashboard</h1><p><a class='btn' href='/orders?key={esc(DASHBOARD_KEY)}'>Orders</a> <a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>CRM</a></p><table><thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Qty</th><th>Status</th><th>Priority</th><th>Due Date</th></tr></thead><tbody>{body}</tbody></table></body></html>
+    """)
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "2.5.0",
+        "version": "3.0.0",
         "status":  "running",
     }
