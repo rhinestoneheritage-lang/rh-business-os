@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v1.9
+RH Business OS — WhatsApp AI Bot v2.5
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -124,9 +124,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v1.9",
+    title="RH Business OS — WhatsApp AI Bot v2.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="1.9.0",
+    version="2.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -1543,7 +1543,7 @@ async def team_dashboard(key: str = ""):
     """)
 
 
-# ── v1.9 Backup & Restore ────────────────────────────────────────────────────
+# ── v2.5 Backup & Restore ────────────────────────────────────────────────────
 @app.get("/backup", response_class=HTMLResponse)
 async def backup_page(key: str = ""):
     if key != DASHBOARD_KEY:
@@ -1567,7 +1567,7 @@ async def download_backup(key: str = ""):
                 zf.write(path, arc)
             else:
                 zf.writestr(arc, "{}" if arc != "messages.json" else "[]")
-        zf.writestr("backup_info.json", json.dumps({"created_at": datetime.utcnow().isoformat()+"Z", "version":"1.9.0"}, indent=2))
+        zf.writestr("backup_info.json", json.dumps({"created_at": datetime.utcnow().isoformat()+"Z", "version":"2.5.0"}, indent=2))
     mem.seek(0)
     return StreamingResponse(mem, media_type="application/zip", headers={"Content-Disposition":"attachment; filename=rh_business_os_backup_v19.zip"})
 
@@ -1592,11 +1592,248 @@ async def restore_customers_backup(key: str = "", file: UploadFile = File(...)):
     return RedirectResponse(url=f"/dashboard?key={DASHBOARD_KEY}", status_code=303)
 
 
+
+# ── v2.0 to v2.5 Quotation System ────────────────────────────────────────────
+PRICE_LIST_FILE = os.getenv("PRICE_LIST_FILE", "data/price_list.json")
+DEFAULT_PRICE_LIST = {
+    "Rhinestone Transfer Sticker": {"unit": "pcs", "price": 0.0},
+    "Custom Rhinestone Design": {"unit": "design", "price": 0.0},
+    "Rhinestone Shirt": {"unit": "pcs", "price": 0.0},
+    "Job Work Pasting": {"unit": "pcs", "price": 0.0},
+}
+
+def _money(value) -> str:
+    try:
+        return f"₹{float(value):,.2f}"
+    except Exception:
+        return "₹0.00"
+
+def _load_price_list() -> dict:
+    if not os.path.exists(PRICE_LIST_FILE):
+        return DEFAULT_PRICE_LIST.copy()
+    try:
+        with open(PRICE_LIST_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else DEFAULT_PRICE_LIST.copy()
+    except Exception as exc:
+        logger.error("Failed to load price list: %s", exc)
+        return DEFAULT_PRICE_LIST.copy()
+
+def _save_price_list(data: dict) -> None:
+    os.makedirs(os.path.dirname(PRICE_LIST_FILE), exist_ok=True)
+    with open(PRICE_LIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+def _quote_total(q: dict) -> dict:
+    qty = float(q.get("qty") or 0)
+    unit_price = float(q.get("unit_price") or 0)
+    discount = float(q.get("discount") or 0)
+    subtotal = qty * unit_price
+    total = max(subtotal - discount, 0)
+    q["subtotal"] = subtotal
+    q["total"] = total
+    return q
+
+def _get_customer_or_404(phone: str):
+    customers = _load_customers()
+    if phone not in customers:
+        return customers, None
+    return customers, customers[phone]
+
+def _find_quote(customer: dict, quote_id: str):
+    for q in customer.get("quotes", []):
+        if str(q.get("quote_id")) == str(quote_id):
+            return q
+    return None
+
+@app.get("/price-list", response_class=HTMLResponse)
+async def price_list_page(key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    plist = _load_price_list()
+    rows = ""
+    for name, item in plist.items():
+        rows += f"""
+        <tr><td><input name='name' value='{esc(name)}'></td><td><input name='unit' value='{esc(item.get('unit','pcs'))}'></td><td><input name='price' type='number' step='0.01' value='{esc(item.get('price',0))}'></td></tr>
+        """
+    rows += "<tr><td><input name='name' placeholder='New item'></td><td><input name='unit' value='pcs'></td><td><input name='price' type='number' step='0.01' value='0'></td></tr>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Price List</title>
+    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}} input{{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;box-sizing:border-box}}</style></head>
+    <body><div class='top'><h1>Price List</h1><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a></div><form method='post' action='/price-list/update?key={esc(DASHBOARD_KEY)}'><table><thead><tr><th>Item</th><th>Unit</th><th>Default Price</th></tr></thead><tbody>{rows}</tbody></table><br><button type='submit'>Save Price List</button></form></body></html>
+    """)
+
+@app.post("/price-list/update")
+async def update_price_list(key: str = "", name: list[str] = Form([]), unit: list[str] = Form([]), price: list[str] = Form([])):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    data = {}
+    for i, n in enumerate(name):
+        n = (n or "").strip()
+        if not n:
+            continue
+        u = unit[i].strip() if i < len(unit) and unit[i] else "pcs"
+        try: pr = float(price[i]) if i < len(price) else 0.0
+        except Exception: pr = 0.0
+        data[n] = {"unit": u, "price": pr}
+    _save_price_list(data)
+    return RedirectResponse(url=f"/price-list?key={DASHBOARD_KEY}", status_code=303)
+
+@app.get("/customer/{phone}/quote/new", response_class=HTMLResponse)
+async def new_quote_page(phone: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    plist = _load_price_list()
+    options = "".join(f"<option value='{esc(n)}' data-price='{esc(v.get('price',0))}'>{esc(n)} — {_money(v.get('price',0))}/{esc(v.get('unit','pcs'))}</option>" for n,v in plist.items())
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Create Quote</title>
+    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .card{{background:white;max-width:760px;padding:20px;border-radius:14px;border:1px solid #e5e5e5}} label{{display:block;margin-top:14px;color:#555}} input,select,textarea{{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;box-sizing:border-box}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer}}</style></head>
+    <body><div class='card'><h1>Create Quotation</h1><p>Customer: <b>{esc(phone)}</b></p><form method='post' action='/customer/{esc(phone)}/quote/create?key={esc(DASHBOARD_KEY)}'>
+    <label>Product / Service</label><select name='product_name' id='product' onchange='document.getElementById("price").value=this.options[this.selectedIndex].dataset.price'>{options}</select>
+    <label>Design / Size / Details</label><input name='details' placeholder='Example: Tiger sticker, 12 inch, SS4 crystal'>
+    <label>Quantity</label><input name='qty' type='number' step='1' value='100'>
+    <label>Unit Price</label><input id='price' name='unit_price' type='number' step='0.01' value='0'>
+    <label>Discount</label><input name='discount' type='number' step='0.01' value='0'>
+    <label>Quote Validity Days</label><input name='validity_days' type='number' step='1' value='7'>
+    <label>Internal / Customer Notes</label><textarea name='notes' placeholder='Payment, delivery, MOQ, GST, shipping etc.'></textarea><br><br>
+    <button type='submit'>Create Quote</button> <a class='btn' href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>Cancel</a></form></div></body></html>
+    """)
+
+@app.post("/customer/{phone}/quote/create")
+async def create_quote(phone: str, key: str = "", product_name: str = Form(""), details: str = Form(""), qty: float = Form(0), unit_price: float = Form(0), discount: float = Form(0), validity_days: int = Form(7), notes: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    now = datetime.utcnow()
+    quote_id = "Q" + now.strftime("%Y%m%d%H%M%S")
+    quote = _quote_total({"quote_id": quote_id, "product_name": product_name, "details": details, "qty": qty, "unit_price": unit_price, "discount": discount, "validity_days": validity_days, "valid_until": (now + timedelta(days=int(validity_days or 7))).date().isoformat(), "notes": notes, "status": "DRAFT", "created_at": now.isoformat()+"Z", "sent_at": None})
+    customer.setdefault("quotes", []).append(quote)
+    customer["last_quote_id"] = quote_id
+    customer["last_quote_total"] = quote.get("total")
+    customer["lead_status"] = "QUOTE_PENDING"
+    customer["pipeline_stage"] = "QUOTE_PENDING"
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}/quote/{quote_id}?key={DASHBOARD_KEY}", status_code=303)
+
+@app.get("/customer/{phone}/quotes", response_class=HTMLResponse)
+async def customer_quotes(phone: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    body = "".join(f"<tr><td><a href='/customer/{esc(phone)}/quote/{esc(q.get('quote_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(q.get('quote_id'))}</a></td><td>{esc(q.get('product_name'))}</td><td>{esc(q.get('qty'))}</td><td>{_money(q.get('total'))}</td><td>{esc(q.get('status'))}</td><td>{esc(q.get('created_at'))}</td></tr>" for q in reversed(customer.get('quotes', []))) or "<tr><td colspan='6' style='text-align:center;padding:24px;color:#777'>No quotes yet.</td></tr>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Quote History</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><h1>Quote History</h1><p><a class='btn' href='/customer/{esc(phone)}/quote/new?key={esc(DASHBOARD_KEY)}'>New Quote</a> <a class='btn' href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>Back</a></p><table><thead><tr><th>Quote ID</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Created</th></tr></thead><tbody>{body}</tbody></table></body></html>
+    """)
+
+@app.get("/customer/{phone}/quote/{quote_id}", response_class=HTMLResponse)
+async def view_quote(phone: str, quote_id: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    q = _find_quote(customer, quote_id)
+    if not q:
+        return HTMLResponse(content="Quote not found", status_code=404)
+    q = _quote_total(q)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    msg = f"Hello, quotation {quote_id} total is {_money(q.get('total'))}. Valid until {q.get('valid_until')}."
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Quotation {esc(quote_id)}</title>
+    <style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .quote{{background:white;max-width:850px;margin:auto;padding:28px;border-radius:14px;border:1px solid #e5e5e5}} .top{{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}} table{{width:100%;border-collapse:collapse;margin-top:20px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}} .total{{font-size:24px;font-weight:700;text-align:right;margin-top:16px}} a.btn,button{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;border:0;cursor:pointer}} select{{padding:10px;border:1px solid #ddd;border-radius:10px}} @media print{{.actions{{display:none}} body{{background:white}} .quote{{border:0}}}}</style></head>
+    <body><div class='quote'><div class='top'><div><h1>Rhinestone Heritage</h1><p>Quotation: <b>{esc(quote_id)}</b><br>Customer: <b>{esc(phone)}</b><br>Valid Until: <b>{esc(q.get('valid_until'))}</b></p></div><div><b>Status:</b> {esc(q.get('status'))}</div></div>
+    <table><thead><tr><th>Product</th><th>Details</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>Total</th></tr></thead><tbody><tr><td>{esc(q.get('product_name'))}</td><td>{esc(q.get('details'))}</td><td>{esc(q.get('qty'))}</td><td>{_money(q.get('unit_price'))}</td><td>{_money(q.get('discount'))}</td><td>{_money(q.get('total'))}</td></tr></tbody></table>
+    <div class='total'>Grand Total: {_money(q.get('total'))}</div><p><b>Notes:</b><br>{esc(q.get('notes'))}</p>
+    <div class='actions'><hr><button onclick='window.print()'>Print / Save PDF</button> <a class='btn' href='/customer/{esc(phone)}/quotes?key={esc(DASHBOARD_KEY)}'>Quote History</a> <a class='btn' href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>Customer</a><br><br>
+    <form style='display:inline' method='post' action='/customer/{esc(phone)}/quote/{esc(quote_id)}/send?key={esc(DASHBOARD_KEY)}'><button type='submit'>Send Quote on WhatsApp</button></form>
+    <form style='display:inline' method='post' action='/customer/{esc(phone)}/quote/{esc(quote_id)}/status?key={esc(DASHBOARD_KEY)}'><select name='status'><option>DRAFT</option><option>QUOTE_SENT</option><option>APPROVED</option><option>REJECTED</option><option>EXPIRED</option><option>ORDER_CREATED</option></select><button type='submit'>Update Status</button></form>
+    <p style='color:#777'>WhatsApp text preview: {esc(msg)}</p></div></div></body></html>
+    """)
+
+@app.post("/customer/{phone}/quote/{quote_id}/status")
+async def update_quote_status(phone: str, quote_id: str, key: str = "", status: str = Form("DRAFT")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    q = _find_quote(customer, quote_id)
+    if not q:
+        return HTMLResponse(content="Quote not found", status_code=404)
+    q["status"] = status
+    q["status_updated_at"] = datetime.utcnow().isoformat()+"Z"
+    if status == "QUOTE_SENT":
+        customer["lead_status"] = "QUOTE_SENT"; customer["pipeline_stage"] = "QUOTE_SENT"
+    elif status == "APPROVED":
+        customer["lead_status"] = "ORDER_POSSIBLE"; customer["pipeline_stage"] = "ORDER_CONFIRMED"
+    elif status == "REJECTED":
+        customer["lead_status"] = "FOLLOW_UP"; customer["pipeline_stage"] = "LOST"
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}/quote/{quote_id}?key={DASHBOARD_KEY}", status_code=303)
+
+@app.post("/customer/{phone}/quote/{quote_id}/send")
+async def send_quote_whatsapp(phone: str, quote_id: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    customers, customer = _get_customer_or_404(phone)
+    if not customer:
+        return HTMLResponse(content="Customer not found", status_code=404)
+    q = _find_quote(customer, quote_id)
+    if not q:
+        return HTMLResponse(content="Quote not found", status_code=404)
+    q = _quote_total(q)
+    body = (f"Hello 👋\n\nRhinestone Heritage quotation details:\n\nQuote ID: {quote_id}\nProduct: {q.get('product_name')}\nDetails: {q.get('details')}\nQty: {q.get('qty')}\nTotal: {_money(q.get('total'))}\nValid Until: {q.get('valid_until')}\n\nNotes: {q.get('notes') or '-'}\n\nPlease confirm if we should proceed.\nTeam Rhinestone Heritage")
+    await _reply(phone, body)
+    q["status"] = "QUOTE_SENT"
+    q["sent_at"] = datetime.utcnow().isoformat()+"Z"
+    customer["lead_status"] = "QUOTE_SENT"
+    customer["pipeline_stage"] = "QUOTE_SENT"
+    _append_message({"message_id": f"manual_quote_{quote_id}", "from": "RH_BUSINESS_OS", "to": phone, "timestamp": str(int(datetime.utcnow().timestamp())), "received_at": datetime.utcnow().isoformat()+"Z", "type": "outbound_quote", "body": body, "raw": {"quote_id": quote_id}})
+    _save_customers(customers)
+    return RedirectResponse(url=f"/customer/{phone}/quote/{quote_id}?key={DASHBOARD_KEY}", status_code=303)
+
+@app.get("/quotes", response_class=HTMLResponse)
+async def quotes_dashboard(key: str = "", status: str = "all"):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+    def esc(value):
+        if value is None: return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+    rows = []
+    for c in _load_customers().values():
+        for q in c.get("quotes", []):
+            if status == "all" or q.get("status") == status:
+                rows.append((c.get("phone_number"), _quote_total(q)))
+    rows.sort(key=lambda x: x[1].get("created_at", ""), reverse=True)
+    total_value = sum(float(q.get("total") or 0) for _, q in rows)
+    body = "".join(f"<tr><td><a href='/customer/{esc(phone)}/quote/{esc(q.get('quote_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(q.get('quote_id'))}</a></td><td><a href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>{esc(phone)}</a></td><td>{esc(q.get('product_name'))}</td><td>{_money(q.get('total'))}</td><td>{esc(q.get('status'))}</td><td>{esc(q.get('created_at'))}</td></tr>" for phone, q in rows) or "<tr><td colspan='6' style='text-align:center;padding:24px;color:#777'>No quotes found.</td></tr>"
+    return HTMLResponse(content=f"""
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Quotes Dashboard</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} .cards{{display:flex;gap:12px;flex-wrap:wrap}} .card{{background:white;padding:16px;border-radius:14px;border:1px solid #e5e5e5}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:16px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><div class='top'><h1>Quotes Dashboard</h1><p><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a> <a class='btn' href='/price-list?key={esc(DASHBOARD_KEY)}'>Price List</a></p></div><div class='cards'><div class='card'><b>Total Quotes</b><br>{len(rows)}</div><div class='card'><b>Total Quote Value</b><br>{_money(total_value)}</div></div><p><a href='/quotes?key={esc(DASHBOARD_KEY)}&status=all'>All</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=DRAFT'>Draft</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=QUOTE_SENT'>Sent</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=APPROVED'>Approved</a></p><table><thead><tr><th>Quote</th><th>Customer</th><th>Product</th><th>Total</th><th>Status</th><th>Created</th></tr></thead><tbody>{body}</tbody></table></body></html>
+    """)
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "1.9.0",
+        "version": "2.5.0",
         "status":  "running",
     }
