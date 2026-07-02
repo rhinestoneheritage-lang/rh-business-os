@@ -1,5 +1,5 @@
 """
-RH Business OS — WhatsApp AI Bot v0.7
+RH Business OS — WhatsApp AI Bot v0.8
 Conversation flow engine + Basic CRM for Rhinestone Heritage WhatsApp Bot.
 
 State machine (per phone number):
@@ -23,8 +23,8 @@ import io
 from datetime import datetime
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 
 from whatsapp_service import WhatsAppService
 
@@ -113,9 +113,9 @@ MSG_FOLLOWUP_WHOLESALER = (
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RH Business OS — WhatsApp AI Bot v0.7",
+    title="RH Business OS — WhatsApp AI Bot v0.8",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="0.7.0",
+    version="0.8.0",
 )
 
 whatsapp = WhatsAppService(
@@ -252,6 +252,19 @@ def _append_message(record: dict) -> None:
             json.dump(messages, f, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error("Failed to save message: %s", exc)
+
+
+
+def _load_messages() -> list:
+    """Load message history."""
+    if not os.path.exists(MESSAGES_FILE):
+        return []
+    try:
+        with open(MESSAGES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.error("Failed to load messages: %s", exc)
+        return []
 
 
 # ── Conversation engine ───────────────────────────────────────────────────────
@@ -800,11 +813,127 @@ async def export_dashboard(key: str = ""):
         headers={"Content-Disposition": "attachment; filename=rh_leads.csv"},
     )
 
+
+# ── Customer Profile Page ─────────────────────────────────────────────────────
+@app.get("/customer/{phone}", response_class=HTMLResponse)
+async def customer_profile(phone: str, key: str = ""):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="<h2 style='font-family:Arial;padding:40px;'>Access Denied</h2>", status_code=401)
+
+    customers = _load_customers()
+    customer = customers.get(phone)
+
+    if not customer:
+        return HTMLResponse(content=f"<h2 style='font-family:Arial;padding:40px;'>Customer not found: {phone}</h2>", status_code=404)
+
+    def esc(value):
+        if value is None:
+            return ""
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    all_messages = _load_messages()
+    customer_messages = [m for m in all_messages if str(m.get("from")) == str(phone)]
+
+    msg_html = ""
+    for m in customer_messages[-100:]:
+        msg_html += f"""
+        <div class="msg">
+            <div class="msg-time">{esc(m.get("received_at"))} • {esc(m.get("type"))}</div>
+            <div class="msg-body">{esc(m.get("body"))}</div>
+        </div>
+        """
+
+    if not msg_html:
+        msg_html = '<div class="empty">No message history found yet.</div>'
+
+    html = f"""
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Customer Profile - {esc(phone)}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; background:#f7f7f7; margin:0; padding:24px; color:#111; }}
+            .top {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; gap:12px; flex-wrap:wrap; }}
+            a.btn, button {{ background:#111; color:white; padding:10px 14px; border-radius:10px; text-decoration:none; border:0; cursor:pointer; }}
+            .grid {{ display:grid; grid-template-columns:340px 1fr; gap:18px; }}
+            .card {{ background:white; border:1px solid #e5e5e5; border-radius:14px; padding:18px; box-shadow:0 2px 8px rgba(0,0,0,.04); }}
+            .label {{ color:#666; font-size:13px; margin-top:12px; }}
+            .value {{ font-weight:700; margin-top:4px; word-break:break-word; }}
+            .pill {{ display:inline-block; padding:6px 10px; border-radius:999px; background:#e8f0ff; font-size:13px; font-weight:700; }}
+            textarea {{ width:100%; min-height:140px; padding:12px; border:1px solid #ddd; border-radius:10px; font-size:14px; box-sizing:border-box; }}
+            .msg {{ background:#fff; border:1px solid #eee; border-radius:12px; padding:12px; margin-bottom:10px; }}
+            .msg-time {{ color:#777; font-size:12px; margin-bottom:6px; }}
+            .msg-body {{ font-size:15px; white-space:pre-wrap; }}
+            .empty {{ background:white; padding:20px; border-radius:12px; color:#777; text-align:center; }}
+            @media(max-width:800px) {{ body {{ padding:14px; }} .grid {{ grid-template-columns:1fr; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="top">
+            <div>
+                <h1>Customer Profile</h1>
+                <div>{esc(phone)}</div>
+            </div>
+            <div>
+                <a class="btn" href="/dashboard?key={esc(DASHBOARD_KEY)}">Back to Dashboard</a>
+                <a class="btn" href="https://wa.me/{esc(phone)}" target="_blank">Open WhatsApp</a>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Lead Details</h2>
+                <div class="label">Phone</div><div class="value">{esc(customer.get("phone_number"))}</div>
+                <div class="label">Buyer Type</div><div class="value"><span class="pill">{esc(customer.get("buyer_type") or "unknown")}</span></div>
+                <div class="label">Lead Status</div><div class="value">{esc(customer.get("lead_status"))}</div>
+                <div class="label">Last Message</div><div class="value">{esc(customer.get("last_message"))}</div>
+                <div class="label">Message Count</div><div class="value">{esc(customer.get("message_count"))}</div>
+                <div class="label">First Seen</div><div class="value">{esc(customer.get("first_seen"))}</div>
+                <div class="label">Last Seen</div><div class="value">{esc(customer.get("last_seen"))}</div>
+
+                <hr style="margin:18px 0;border:0;border-top:1px solid #eee;">
+                <h3>Internal Notes</h3>
+                <form method="post" action="/customer/{esc(phone)}/notes?key={esc(DASHBOARD_KEY)}">
+                    <textarea name="notes" placeholder="Add customer notes here...">{esc(customer.get("notes") or "")}</textarea>
+                    <br><br><button type="submit">Save Notes</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2>Message History</h2>
+                {msg_html}
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@app.post("/customer/{phone}/notes")
+async def save_customer_notes(phone: str, key: str = "", notes: str = Form("")):
+    if key != DASHBOARD_KEY:
+        return HTMLResponse(content="Access Denied", status_code=401)
+
+    customers = _load_customers()
+    if phone not in customers:
+        return HTMLResponse(content="Customer not found", status_code=404)
+
+    customers[phone]["notes"] = notes
+    customers[phone]["notes_updated_at"] = datetime.utcnow().isoformat() + "Z"
+    _save_customers(customers)
+
+    return RedirectResponse(url=f"/customer/{phone}?key={DASHBOARD_KEY}", status_code=303)
+
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/")
 async def health():
     return {
         "service": "RH Business OS — WhatsApp AI Bot",
-        "version": "0.7.0",
+        "version": "0.8.0",
         "status":  "running",
     }
