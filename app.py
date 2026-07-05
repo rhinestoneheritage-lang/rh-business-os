@@ -2269,23 +2269,151 @@ async def view_invoice(phone: str, order_id: str, key: str = ""):
 
 
 @app.get("/orders", response_class=HTMLResponse)
-async def orders_dashboard(key: str = "", status: str = "all"):
+async def orders_dashboard(key: str = "", status: str = "all", q: str = ""):
     if key != DASHBOARD_KEY:
         return HTMLResponse(content="Access Denied", status_code=401)
     def esc(value):
         if value is None: return ""
         return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
-    rows = []
+
+    all_rows = []
     for c in _load_customers().values():
         for o in c.get("orders", []):
             _payment_summary(o)
-            if status == "all" or o.get("order_status") == status or o.get("payment_status") == status:
-                rows.append((c.get("phone_number"), o))
+            all_rows.append((c.get("phone_number"), o))
+
+    query = (q or "").strip().lower()
+    rows = []
+    for phone, o in all_rows:
+        if status != "all" and o.get("order_status") != status and o.get("payment_status") != status:
+            continue
+        if query:
+            haystack = " ".join([str(phone), str(o.get("order_id", "")), str(o.get("product_name", "")), str(o.get("order_status", "")), str(o.get("payment_status", ""))]).lower()
+            if query not in haystack:
+                continue
+        rows.append((phone, o))
+
     rows.sort(key=lambda x: x[1].get("created_at", ""), reverse=True)
-    body = ''.join(f"<tr><td><a href='/customer/{esc(phone)}/order/{esc(o.get('order_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(o.get('order_id'))}</a></td><td><a href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>{esc(phone)}</a></td><td>{esc(o.get('product_name'))}</td><td>{esc(o.get('qty'))}</td><td>{_money(o.get('total_amount'))}</td><td>{esc(o.get('order_status'))}</td><td>{esc(o.get('payment_status'))}</td><td>{esc(o.get('priority'))}</td><td>{esc(o.get('due_date'))}</td></tr>" for phone,o in rows) or "<tr><td colspan='9' style='text-align:center;padding:24px;color:#777'>No orders found.</td></tr>"
+    total_all = len(all_rows)
+    pending_count = sum(1 for _, o in all_rows if o.get("order_status") == "PENDING")
+    production_count = sum(1 for _, o in all_rows if o.get("order_status") == "IN_PRODUCTION")
+    ready_count = sum(1 for _, o in all_rows if o.get("order_status") == "READY")
+    dispatched_count = sum(1 for _, o in all_rows if o.get("order_status") == "DISPATCHED")
+    unpaid_count = sum(1 for _, o in all_rows if o.get("payment_status") == "UNPAID")
     total_value = sum(_order_total(o) for _, o in rows)
+
+    def chip(label, value, count):
+        active = "active" if status == value else ""
+        return f"<a class='chip {active}' href='/orders?key={esc(DASHBOARD_KEY)}&status={esc(value)}&q={esc(q)}'>{esc(label)} ({count})</a>"
+
+    def badge(value, kind='status'):
+        value = value or "PENDING"
+        cls = {
+            "PENDING": "yellow", "IN_PRODUCTION": "blue", "READY": "green", "DISPATCHED": "purple", "DELIVERED": "green",
+            "UNPAID": "danger", "PARTIAL": "yellow", "PAID": "green", "URGENT": "danger", "NORMAL": "muted"
+        }.get(value, "muted")
+        return f"<span class='badge {cls}'>{esc(value)}</span>"
+
+    if rows:
+        body = ''.join(
+            f"""
+            <tr>
+                <td><a class='main-link' href='/customer/{esc(phone)}/order/{esc(o.get('order_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(o.get('order_id'))}</a><div class='muted'>View Order</div></td>
+                <td><a href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>{esc(phone)}</a><div class='muted'>Customer Profile</div></td>
+                <td><b>{esc(o.get('product_name') or '-')}</b><div class='muted'>{esc(o.get('details') or '')}</div></td>
+                <td>{esc(o.get('qty') or '-')}</td>
+                <td><b>{_money(o.get('total_amount'))}</b></td>
+                <td>{badge(o.get('order_status'))}</td>
+                <td>{badge(o.get('payment_status'))}</td>
+                <td>{badge(o.get('priority'))}</td>
+                <td>{esc(o.get('due_date') or '-')}</td>
+            </tr>
+            """ for phone, o in rows
+        )
+    else:
+        body = """
+        <tr><td colspan='9'>
+            <div class='empty-state'>
+                <div class='empty-icon'>📦</div>
+                <h3>No orders found</h3>
+                <p>Orders will appear here after a quote is approved and converted to order.</p>
+                <a class='btn' href='/dashboard?key={key}'>Go to CRM</a>
+            </div>
+        </td></tr>
+        """.replace('{key}', esc(DASHBOARD_KEY))
+
     return HTMLResponse(content=f"""
-    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Orders Dashboard</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} .cards{{display:flex;gap:12px;flex-wrap:wrap}} .card{{background:white;padding:16px;border-radius:14px;border:1px solid #e5e5e5}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:16px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><div class='top'><h1>Orders Dashboard</h1><p><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>CRM</a> <a class='btn' href='/production?key={esc(DASHBOARD_KEY)}'>Production</a></p></div><div class='cards'><div class='card'><b>Total Orders</b><br>{len(rows)}</div><div class='card'><b>Total Value</b><br>{_money(total_value)}</div></div><p><a href='/orders?key={esc(DASHBOARD_KEY)}&status=all'>All</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=PENDING'>Pending</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=IN_PRODUCTION'>In Production</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=READY'>Ready</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=DISPATCHED'>Dispatched</a> | <a href='/orders?key={esc(DASHBOARD_KEY)}&status=UNPAID'>Unpaid</a></p><table><thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Payment</th><th>Priority</th><th>Due</th></tr></thead><tbody>{body}</tbody></table></body></html>
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset='utf-8'>
+        <meta name='viewport' content='width=device-width, initial-scale=1'>
+        <title>Orders Dashboard</title>
+        <style>
+            :root {{ --bg:#050814; --panel:#0b1224; --panel2:#101a33; --border:#263756; --text:#f8fbff; --muted:#9fb0cf; --purple:#7c3aed; --purple2:#a855f7; --blue:#1d8cff; --green:#22c55e; --orange:#f97316; --pink:#ec4899; --red:#ef4444; }}
+            * {{ box-sizing:border-box; }} body {{ margin:0; font-family:Arial, sans-serif; background:radial-gradient(circle at top left, rgba(124,58,237,.16), transparent 35%), var(--bg); color:var(--text); }}
+            .layout {{ display:grid; grid-template-columns:250px 1fr; min-height:100vh; }}
+            .sidebar {{ background:#070b18; border-right:1px solid var(--border); padding:22px 16px; position:sticky; top:0; height:100vh; }}
+            .brand {{ display:flex; gap:12px; align-items:center; margin-bottom:26px; }} .logo {{ width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,var(--purple),var(--purple2));display:grid;place-items:center;font-weight:900;box-shadow:0 0 24px rgba(124,58,237,.45); }}
+            .brand b {{ font-size:24px; }} .brand small {{ display:block;color:var(--muted);font-size:12px;letter-spacing:.08em; }}
+            .nav a {{ display:flex;align-items:center;gap:10px;color:#d9d8ff;text-decoration:none;padding:13px 14px;border-radius:12px;margin-bottom:7px; }} .nav a.active,.nav a:hover {{ background:linear-gradient(90deg,rgba(124,58,237,.75),rgba(124,58,237,.25)); color:white; }}
+            .main {{ padding:24px 32px 40px; }}
+            .topbar {{ display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:28px; }}
+            .breadcrumbs {{ color:var(--muted);display:flex;align-items:center;gap:10px; }} .home {{ width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,var(--purple),#4c1d95);color:white;text-decoration:none;box-shadow:0 0 22px rgba(124,58,237,.38); }}
+            .actions {{ display:flex; gap:10px; align-items:center; }} input {{ background:#0b1224;border:1px solid var(--border);color:white;border-radius:12px;padding:13px 15px;min-width:340px; }}
+            .btn, button {{ border:0;border-radius:12px;padding:12px 18px;background:linear-gradient(135deg,var(--purple),#5b21b6);color:white;font-weight:800;text-decoration:none;cursor:pointer;box-shadow:0 10px 28px rgba(124,58,237,.25); }}
+            .title h1 {{ margin:0 0 6px;font-size:32px; }} .title p {{ margin:0;color:var(--muted); }}
+            .cards {{ display:grid;grid-template-columns:repeat(5,minmax(160px,1fr));gap:16px;margin:24px 0; }}
+            .card {{ position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(124,58,237,.28),rgba(16,26,51,.82));border:1px solid var(--border);border-radius:18px;padding:18px;min-height:128px; }}
+            .card.blue {{ background:linear-gradient(135deg,rgba(29,140,255,.26),rgba(16,26,51,.82)); }} .card.green {{ background:linear-gradient(135deg,rgba(34,197,94,.24),rgba(16,26,51,.82)); }} .card.orange {{ background:linear-gradient(135deg,rgba(249,115,22,.26),rgba(16,26,51,.82)); }} .card.pink {{ background:linear-gradient(135deg,rgba(236,72,153,.25),rgba(16,26,51,.82)); }}
+            .card-title {{ color:#d9ccff;font-weight:800;font-size:14px; }} .card-value {{ font-size:34px;font-weight:900;margin-top:10px; }} .card-sub {{ color:#37f58d;margin-top:10px;font-size:13px; }} .card-icon {{ position:absolute;right:18px;top:18px;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.08);font-size:22px; }}
+            .panel {{ background:rgba(11,18,36,.88);border:1px solid var(--border);border-radius:20px;padding:20px;box-shadow:0 10px 35px rgba(0,0,0,.22); }}
+            .panel-head {{ display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px; }} .chips {{ display:flex;gap:10px;flex-wrap:wrap; }} .chip {{ color:white;text-decoration:none;border:1px solid var(--border);border-radius:12px;padding:11px 15px;font-weight:800;background:#0b1224; }} .chip.active {{ background:linear-gradient(135deg,var(--purple),#5b21b6);border-color:transparent; }}
+            table {{ width:100%;border-collapse:collapse;overflow:hidden;border-radius:16px; }} th {{ background:#2b1e57;color:#f0d4ff;text-align:left;padding:14px; }} td {{ padding:15px 14px;border-bottom:1px solid rgba(255,255,255,.06);vertical-align:top; }} tr:hover td {{ background:rgba(124,58,237,.07); }} a {{ color:#d86bff; }} .main-link {{ font-weight:900;text-decoration:none; }} .muted {{ color:var(--muted);font-size:13px;margin-top:4px; }}
+            .badge {{ display:inline-block;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:900; }} .badge.green{{background:rgba(34,197,94,.18);color:#45f18c}} .badge.blue{{background:rgba(29,140,255,.18);color:#55aaff}} .badge.yellow{{background:rgba(234,179,8,.18);color:#facc15}} .badge.purple{{background:rgba(124,58,237,.22);color:#c084fc}} .badge.danger{{background:rgba(239,68,68,.18);color:#ff7b7b}} .badge.muted{{background:rgba(148,163,184,.14);color:#cbd5e1}}
+            .empty-state {{ text-align:center;padding:46px 20px;color:var(--muted); }} .empty-state h3 {{ color:white;margin:10px 0 6px; }} .empty-icon {{ font-size:42px; }}
+            .safe {{ margin-top:18px;padding:18px;border:1px solid rgba(34,197,94,.3);background:rgba(34,197,94,.08);border-radius:18px;color:#bfffd4;display:flex;justify-content:space-between;gap:12px;align-items:center; }}
+            @media(max-width:1000px) {{ .layout{{grid-template-columns:1fr}} .sidebar{{display:none}} .cards{{grid-template-columns:1fr 1fr}} .topbar{{flex-direction:column;align-items:flex-start}} input{{min-width:0;width:100%}} .actions{{width:100%;flex-wrap:wrap}} }}
+        </style>
+    </head>
+    <body>
+        <div class='layout'>
+            <aside class='sidebar'>
+                <div class='brand'><div class='logo'>RH</div><div><b>OREIUM</b><small>BUSINESS OS</small></div></div>
+                <div class='nav'>
+                    <a href='/dashboard?key={esc(DASHBOARD_KEY)}'>⌂ Dashboard</a>
+                    <a href='/dashboard?key={esc(DASHBOARD_KEY)}'>✆ WhatsApp</a>
+                    <a href='/dashboard?key={esc(DASHBOARD_KEY)}'>♙ CRM</a>
+                    <a class='active' href='/orders?key={esc(DASHBOARD_KEY)}'>▾ Orders</a>
+                    <a href='/quotes?key={esc(DASHBOARD_KEY)}'>▦ Quotes</a>
+                    <a href='/production?key={esc(DASHBOARD_KEY)}'>⚙ Production</a>
+                    <a href='/inventory?key={esc(DASHBOARD_KEY)}'>□ Inventory</a>
+                    <a href='/reports?key={esc(DASHBOARD_KEY)}'>▥ Reports</a>
+                    <a href='/settings?key={esc(DASHBOARD_KEY)}'>⚙ Settings</a>
+                </div>
+            </aside>
+            <main class='main'>
+                <div class='topbar'>
+                    <div class='breadcrumbs'><a class='home' href='/dashboard?key={esc(DASHBOARD_KEY)}'>⌂</a><span>Home</span><span>›</span><span>Sales</span><span>›</span><b>Orders Dashboard</b></div>
+                    <form class='actions' method='get' action='/orders'><input type='hidden' name='key' value='{esc(DASHBOARD_KEY)}'><input type='hidden' name='status' value='{esc(status)}'><input name='q' value='{esc(q)}' placeholder='Search orders, phone, product, status...'><button>Search</button><a class='btn' href='/production?key={esc(DASHBOARD_KEY)}'>Production</a></form>
+                </div>
+                <div class='title'><h1>Orders Dashboard</h1><p>Manage confirmed orders, payment status, production status and delivery priority.</p></div>
+                <div class='cards'>
+                    <div class='card'><div class='card-title'>Total Orders</div><div class='card-value'>{total_all}</div><div class='card-sub'>All confirmed orders</div><div class='card-icon'>📦</div></div>
+                    <div class='card blue'><div class='card-title'>Total Value</div><div class='card-value'>{_money(total_value)}</div><div class='card-sub'>Filtered value</div><div class='card-icon'>₹</div></div>
+                    <div class='card green'><div class='card-title'>In Production</div><div class='card-value'>{production_count}</div><div class='card-sub'>Active jobs</div><div class='card-icon'>🏭</div></div>
+                    <div class='card orange'><div class='card-title'>Pending</div><div class='card-value'>{pending_count}</div><div class='card-sub'>Waiting to start</div><div class='card-icon'>⏱</div></div>
+                    <div class='card pink'><div class='card-title'>Unpaid</div><div class='card-value'>{unpaid_count}</div><div class='card-sub'>Need payment follow-up</div><div class='card-icon'>💳</div></div>
+                </div>
+                <section class='panel'>
+                    <div class='panel-head'><div class='chips'>{chip('All', 'all', total_all)}{chip('Pending', 'PENDING', pending_count)}{chip('In Production', 'IN_PRODUCTION', production_count)}{chip('Ready', 'READY', ready_count)}{chip('Dispatched', 'DISPATCHED', dispatched_count)}{chip('Unpaid', 'UNPAID', unpaid_count)}</div><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>CRM</a></div>
+                    <table><thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Payment</th><th>Priority</th><th>Due</th></tr></thead><tbody>{body}</tbody></table>
+                </section>
+                <div class='safe'><div><b>All your existing data is safe.</b><br><span class='muted'>This update changes UI only. Your inquiries, customers, orders and messages remain stored in the same data files.</span></div><a class='btn' href='/backup-center?key={esc(DASHBOARD_KEY)}'>Backup Center</a></div>
+            </main>
+        </div>
+    </body>
+    </html>
     """)
 
 
@@ -2302,79 +2430,17 @@ async def production_dashboard(key: str = ""):
             if o.get("order_status") in ("PENDING", "IN_PRODUCTION", "READY"):
                 rows.append((c.get("phone_number"), o))
     rows.sort(key=lambda x: (x[1].get("priority") != "URGENT", x[1].get("due_date", "")))
-    body = ''.join(f"<tr><td><a href='/customer/{esc(phone)}/order/{esc(o.get('order_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(o.get('order_id'))}</a></td><td>{esc(phone)}</td><td>{esc(o.get('product_name'))}</td><td>{esc(o.get('qty'))}</td><td>{esc(o.get('order_status'))}</td><td>{esc(o.get('priority'))}</td><td>{esc(o.get('due_date'))}</td></tr>" for phone,o in rows) or "<tr><td colspan='7' style='text-align:center;padding:24px;color:#777'>No active production jobs.</td></tr>"
+    pending = sum(1 for _, o in rows if o.get("order_status") == "PENDING")
+    in_prod = sum(1 for _, o in rows if o.get("order_status") == "IN_PRODUCTION")
+    ready = sum(1 for _, o in rows if o.get("order_status") == "READY")
+    urgent = sum(1 for _, o in rows if o.get("priority") == "URGENT")
+    body = ''.join(f"<tr><td><a class='main-link' href='/customer/{esc(phone)}/order/{esc(o.get('order_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(o.get('order_id'))}</a></td><td>{esc(phone)}</td><td><b>{esc(o.get('product_name'))}</b></td><td>{esc(o.get('qty'))}</td><td><span class='badge blue'>{esc(o.get('order_status'))}</span></td><td><span class='badge danger' if o.get('priority') == 'URGENT' else 'badge muted'>{esc(o.get('priority'))}</span></td><td>{esc(o.get('due_date'))}</td></tr>" for phone,o in rows) or "<tr><td colspan='7'><div class='empty-state'><div class='empty-icon'>🏭</div><h3>No active production jobs</h3><p>Orders marked Pending, In Production or Ready will appear here.</p></div></td></tr>"
     return HTMLResponse(content=f"""
-    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Production Dashboard</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:16px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><h1>Production Dashboard</h1><p><a class='btn' href='/orders?key={esc(DASHBOARD_KEY)}'>Orders</a> <a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>CRM</a></p><table><thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Qty</th><th>Status</th><th>Priority</th><th>Due Date</th></tr></thead><tbody>{body}</tbody></table></body></html>
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Production Dashboard</title>
+    <style>
+    :root{{--bg:#050814;--panel:#0b1224;--border:#263756;--text:#f8fbff;--muted:#9fb0cf;--purple:#7c3aed;--blue:#1d8cff;--green:#22c55e;--orange:#f97316;--red:#ef4444}}*{{box-sizing:border-box}}body{{margin:0;font-family:Arial,sans-serif;background:radial-gradient(circle at top left,rgba(124,58,237,.16),transparent 35%),var(--bg);color:var(--text);padding:28px}}.wrap{{max-width:1280px;margin:auto}}.top{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:24px}}.home,.btn{{background:linear-gradient(135deg,var(--purple),#5b21b6);color:white;text-decoration:none;border-radius:12px;padding:12px 16px;font-weight:800}}h1{{font-size:32px;margin:0 0 6px}}p{{color:var(--muted)}}.cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:22px 0}}.card{{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(16,26,51,.82));border:1px solid var(--border);border-radius:18px;padding:18px}}.card b{{color:#d9ccff}}.card div{{font-size:34px;font-weight:900;margin-top:10px}}.panel{{background:rgba(11,18,36,.88);border:1px solid var(--border);border-radius:20px;padding:20px}}table{{width:100%;border-collapse:collapse;overflow:hidden;border-radius:16px}}th{{background:#2b1e57;color:#f0d4ff;text-align:left;padding:14px}}td{{padding:15px;border-bottom:1px solid rgba(255,255,255,.06)}}a{{color:#d86bff}}.main-link{{font-weight:900;text-decoration:none}}.badge{{display:inline-block;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:900}}.badge.blue{{background:rgba(29,140,255,.18);color:#55aaff}}.badge.danger{{background:rgba(239,68,68,.18);color:#ff7b7b}}.badge.muted{{background:rgba(148,163,184,.14);color:#cbd5e1}}.empty-state{{text-align:center;padding:42px 20px;color:var(--muted)}}.empty-state h3{{color:white}}.empty-icon{{font-size:42px}}@media(max-width:900px){{.cards{{grid-template-columns:1fr 1fr}}}}
+    </style></head><body><div class='wrap'><div class='top'><div><a class='home' href='/dashboard?key={esc(DASHBOARD_KEY)}'>⌂ Home</a> <a class='btn' href='/orders?key={esc(DASHBOARD_KEY)}'>Orders</a></div><div><a class='btn' href='/backup-center?key={esc(DASHBOARD_KEY)}'>Backup Center</a></div></div><h1>Production Dashboard</h1><p>Track pending, active and ready jobs in one premium production board.</p><div class='cards'><div class='card'><b>Total Active Jobs</b><div>{len(rows)}</div></div><div class='card'><b>Pending</b><div>{pending}</div></div><div class='card'><b>In Production</b><div>{in_prod}</div></div><div class='card'><b>Urgent</b><div>{urgent}</div></div></div><section class='panel'><table><thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Qty</th><th>Status</th><th>Priority</th><th>Due Date</th></tr></thead><tbody>{body}</tbody></table></section></div></body></html>
     """)
-
-
-# ── Inventory Module v3.1–v3.5 ──────────────────────────────────────────────
-# v3.1 Stone Stock • v3.2 Material Stock • v3.3 Stock Ledger
-# v3.4 Low Stock Alerts • v3.5 Inventory Dashboard + CSV Export
-
-INVENTORY_FILE = os.getenv("INVENTORY_FILE", "data/inventory.json")
-INVENTORY_CATEGORIES = ["Stone", "Hotfix Film", "Transfer Tape", "Packing", "Machine", "Other"]
-STOCK_ACTIONS = ["IN", "OUT", "ADJUST"]
-
-
-def _load_inventory() -> dict:
-    if not os.path.exists(INVENTORY_FILE):
-        return {"items": {}, "ledger": []}
-    try:
-        with open(INVENTORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        data.setdefault("items", {})
-        data.setdefault("ledger", [])
-        return data
-    except Exception as exc:
-        logger.error("Failed to load inventory: %s", exc)
-        return {"items": {}, "ledger": []}
-
-
-def _save_inventory(data: dict) -> None:
-    try:
-        os.makedirs(os.path.dirname(INVENTORY_FILE), exist_ok=True)
-        with open(INVENTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception as exc:
-        logger.error("Failed to save inventory: %s", exc)
-
-
-def _inventory_item_id(category: str, name: str, variant: str) -> str:
-    raw = f"{category}-{name}-{variant}".lower().strip()
-    safe = "".join(ch if ch.isalnum() else "-" for ch in raw)
-    while "--" in safe:
-        safe = safe.replace("--", "-")
-    return safe.strip("-") or f"item-{int(datetime.utcnow().timestamp())}"
-
-
-def _stock_number(value) -> float:
-    try:
-        return float(value or 0)
-    except Exception:
-        return 0.0
-
-
-def _fmt_qty(value) -> str:
-    n = _stock_number(value)
-    if n.is_integer():
-        return str(int(n))
-    return f"{n:.2f}"
-
-
-def _inventory_summary(data: dict) -> dict:
-    items = list(data.get("items", {}).values())
-    total_items = len(items)
-    low_stock = [i for i in items if _stock_number(i.get("current_stock")) <= _stock_number(i.get("min_stock"))]
-    stones = [i for i in items if i.get("category") == "Stone"]
-    materials = [i for i in items if i.get("category") != "Stone"]
-    return {
-        "total_items": total_items,
-        "low_stock_count": len(low_stock),
-        "stone_items": len(stones),
-        "material_items": len(materials),
-        "ledger_count": len(data.get("ledger", [])),
-    }
 
 
 @app.get("/inventory", response_class=HTMLResponse)
