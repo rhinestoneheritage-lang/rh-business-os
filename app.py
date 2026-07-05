@@ -50,6 +50,12 @@ button,a.btn,.btn,.refresh,.filter,.chip{background:linear-gradient(135deg,#7C3A
 .label,.subtitle,.msg-time,.card-title,.empty,.empty-small,small{color:var(--muted)!important}.value,.phone,.phone-link,b,strong{color:#F8FAFC!important}.pill,.mini-pill{border-radius:999px!important;font-weight:800!important}.buyer{background:rgba(124,58,237,.18)!important;color:#C084FC!important}.qualified,.green{background:rgba(34,197,94,.15)!important;color:#4ADE80!important}.website,.orange{background:rgba(249,115,22,.15)!important;color:#FB923C!important}.waiting,.yellow{background:rgba(250,204,21,.15)!important;color:#FDE047!important}.new,.blue{background:rgba(22,131,255,.15)!important;color:#60A5FA!important}.purple{background:rgba(124,58,237,.18)!important;color:#C084FC!important}
 .top,.header,.toolbar{background:transparent!important;color:var(--text)!important}.grid{gap:18px!important}.top a,.header a{margin:3px}.msg{margin-bottom:10px!important}.msg-body{color:#E5E7EB!important}.lastmsg{color:#D1D5DB!important}.card-value{color:#F8FAFC!important}
 body:not(:has(.app))::before{content:'OREIUM Business OS';display:block;max-width:1280px;margin:0 auto 18px auto;padding:22px 24px;border-bottom:1px solid var(--line);font-weight:900;font-size:24px;color:#F8FAFC;background:linear-gradient(90deg,rgba(124,58,237,.16),transparent);border-radius:0 0 18px 18px} body:not(:has(.app)){padding:24px!important}
+
+.oreium-floating-home{position:fixed;top:18px;left:18px;z-index:99999;width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#7C3AED,#4F46E5);color:#fff!important;text-decoration:none!important;font-size:20px;font-weight:900;box-shadow:0 14px 32px rgba(124,58,237,.35);border:1px solid rgba(255,255,255,.14)}
+.oreium-floating-home:hover{filter:brightness(1.12);transform:translateY(-1px)}
+body:has(.app) .oreium-floating-home{display:none}
+@media(max-width:800px){.oreium-floating-home{top:10px;left:10px;width:42px;height:42px}}
+
 @media(max-width:800px){body:not(:has(.app)){padding:14px!important} table{display:block!important;overflow-x:auto!important}.grid{grid-template-columns:1fr!important}.top,.header,.toolbar{flex-direction:column!important;align-items:flex-start!important}}
 </style>
 """
@@ -67,7 +73,12 @@ def _apply_premium_dark_theme(content: str) -> str:
         return f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>{PREMIUM_DARK_THEME_CSS}</head><body><div class='card' style='max-width:640px;margin:80px auto;padding:28px;'><h2>OREIUM Business OS</h2><p>{safe}</p><p><a class='btn' href='/dashboard?key={DASHBOARD_KEY}'>Back to Dashboard</a></p></div></body></html>"
     if "</head>" in low:
         idx = low.rfind("</head>")
-        return content[:idx] + PREMIUM_DARK_THEME_CSS + content[idx:]
+        content = content[:idx] + PREMIUM_DARK_THEME_CSS + content[idx:]
+    if "</body>" in content.lower():
+        low2 = content.lower()
+        idx2 = low2.rfind("</body>")
+        return content[:idx2] + '\n<script id="oreium-global-home-button">\n(function(){\n  try{\n    if(document.querySelector(\'.app\')) return;\n    if(document.querySelector(\'.oreium-floating-home\')) return;\n    var params = new URLSearchParams(window.location.search);\n    var key = params.get(\'key\') || \'RH2026\';\n    var a = document.createElement(\'a\');\n    a.className = \'oreium-floating-home\';\n    a.href = \'/dashboard?key=\' + encodeURIComponent(key);\n    a.title = \'Home Dashboard\';\n    a.innerHTML = \'⌂\';\n    document.body.appendChild(a);\n  }catch(e){}\n})();\n</script>\n' + content[idx2:]
+    return content
     return content.replace("<html", "<html", 1).replace(">", "><head>" + PREMIUM_DARK_THEME_CSS + "</head>", 1)
 
 
@@ -194,7 +205,7 @@ MSG_FOLLOWUP_WHOLESALER = (
 app = FastAPI(
     title="RH Business OS — WhatsApp AI Bot v6.5",
     description="Conversation flow engine + Basic CRM for Rhinestone Heritage",
-    version="10.3.0",
+    version="10.5.0",
 )
 
 whatsapp = WhatsAppService(
@@ -718,7 +729,7 @@ async def dashboard(q: str = "", filter: str = "all", key: str = ""):
     @media(max-width:1200px){{.kpis{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}.bottom-status{{grid-template-columns:repeat(2,1fr)}}}} @media(max-width:760px){{.app{{grid-template-columns:1fr}}.sidebar{{position:relative;height:auto}}.pro,.version{{display:none}}.topbar{{flex-direction:column;align-items:stretch}}.search-input{{width:100%}}.kpis{{grid-template-columns:1fr}}table{{display:block;overflow-x:auto}}}}
     </style></head><body><div class='app'><aside class='sidebar'><div class='brand'><div class='logo'>RH</div><div><h2>OREIUM</h2><small>BUSINESS OS</small></div></div>
     <a class='nav active' href='/dashboard?key={esc(DASHBOARD_KEY)}'><span>⌂</span>Dashboard</a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=followup_today'><span>☘</span>WhatsApp <b style='margin-left:auto;background:#7C3AED;padding:2px 8px;border-radius:999px;'>{today_followups}</b></a><a class='nav' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified'><span>♙</span>CRM</a><a class='nav' href='/quotes?key={esc(DASHBOARD_KEY)}'><span>▾</span>Sales</a><a class='nav' href='/production?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Production</a><a class='nav' href='/inventory?key={esc(DASHBOARD_KEY)}'><span>□</span>Inventory</a><a class='nav' href='/staff?key={esc(DASHBOARD_KEY)}'><span>♧</span>HR</a><a class='nav' href='/reports?key={esc(DASHBOARD_KEY)}'><span>▥</span>Reports</a><a class='nav' href='/settings?key={esc(DASHBOARD_KEY)}'><span>⚙</span>Settings</a>
-    <div class='pro'><div style='font-size:28px;'>♛</div><b>OREIUM PRO</b><p style='color:#9CA3AF;font-size:13px;'>Premium business dashboard</p><a class='btn primary' href='/system?key={esc(DASHBOARD_KEY)}'>System Center</a></div><div class='version'>v10.4.0 | Auto Backup UI</div></aside>
+    <div class='pro'><div style='font-size:28px;'>♛</div><b>OREIUM PRO</b><p style='color:#9CA3AF;font-size:13px;'>Premium business dashboard</p><a class='btn primary' href='/system?key={esc(DASHBOARD_KEY)}'>System Center</a></div><div class='version'>v10.5.0 | Auto Backup UI</div></aside>
     <main class='main'><div class='topbar'><div><h1>Welcome back, Admin 👋</h1><div class='subtitle'>Here is what is happening in your business today.</div></div><div class='searchbar'><form method='get' action='/dashboard' style='display:flex;gap:10px;'><input type='hidden' name='key' value='{esc(DASHBOARD_KEY)}'><input type='hidden' name='filter' value='{esc(filter)}'><input class='search-input' name='q' value='{esc(q)}' placeholder='Search phone, status, message...'><button class='btn primary' type='submit'>Search</button></form><a class='btn' href='/dashboard/export?key={esc(DASHBOARD_KEY)}'>CSV</a></div></div>
     <section class='kpis'>{kpi('Total Leads', total, '₹', 'purple', '+18.6% vs last 7 days')}{kpi('New Leads', total, '👥', 'blue', str(wholesalers)+' wholesalers')}{kpi('Orders', order_confirmed, '🛍', 'green', 'Confirmed pipeline')}{kpi('Follow-ups', today_followups + missed_followups, '⏱', 'orange', str(missed_followups)+' missed')}{kpi('Pending Tasks', open_tasks, '☑', 'pink', 'Team work queue')}</section>
     <section class='grid'><div class='panel'><div class='panel-head'><h3>Business Overview</h3><a class='view' href='/reports?key={esc(DASHBOARD_KEY)}'>View Reports</a></div><div class='chart'></div></div><div class='panel'><div class='panel-head'><h3>Recent Activities</h3><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}'>View All</a></div>{recent_html}</div><div class='panel'><div class='panel-head'><h3>Pipeline Overview</h3></div><div class='donut'><div class='donut-inner'><span>Total Deals</span><b>{total}</b></div></div><a class='view' href='/dashboard?key={esc(DASHBOARD_KEY)}&filter=qualified' style='display:block;text-align:center;'>View Full Pipeline →</a></div></section>
@@ -1838,23 +1849,201 @@ async def send_quote_whatsapp(phone: str, quote_id: str, key: str = ""):
     return RedirectResponse(url=f"/customer/{phone}/quote/{quote_id}?key={DASHBOARD_KEY}", status_code=303)
 
 @app.get("/quotes", response_class=HTMLResponse)
-async def quotes_dashboard(key: str = "", status: str = "all"):
+async def quotes_dashboard(key: str = "", status: str = "all", q: str = ""):
     if key != DASHBOARD_KEY:
         return HTMLResponse(content="Access Denied", status_code=401)
+
     def esc(value):
-        if value is None: return ""
+        if value is None:
+            return ""
         return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace(chr(34), "&quot;")
+
+    customers = _load_customers()
+    all_quotes = []
+    for c in customers.values():
+        phone = c.get("phone_number", "")
+        for quote in c.get("quotes", []):
+            qq = _quote_total(quote)
+            all_quotes.append((phone, c, qq))
+
+    draft_count = sum(1 for _, _, quote in all_quotes if quote.get("status") == "DRAFT")
+    sent_count = sum(1 for _, _, quote in all_quotes if quote.get("status") == "QUOTE_SENT")
+    approved_count = sum(1 for _, _, quote in all_quotes if quote.get("status") == "APPROVED")
+    rejected_count = sum(1 for _, _, quote in all_quotes if quote.get("status") == "REJECTED")
+    expired_count = sum(1 for _, _, quote in all_quotes if quote.get("status") == "EXPIRED")
+    total_value_all = sum(float(quote.get("total") or 0) for _, _, quote in all_quotes)
+
+    query = (q or "").strip().lower()
     rows = []
-    for c in _load_customers().values():
-        for q in c.get("quotes", []):
-            if status == "all" or q.get("status") == status:
-                rows.append((c.get("phone_number"), _quote_total(q)))
-    rows.sort(key=lambda x: x[1].get("created_at", ""), reverse=True)
-    total_value = sum(float(q.get("total") or 0) for _, q in rows)
-    body = "".join(f"<tr><td><a href='/customer/{esc(phone)}/quote/{esc(q.get('quote_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(q.get('quote_id'))}</a></td><td><a href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>{esc(phone)}</a></td><td>{esc(q.get('product_name'))}</td><td>{_money(q.get('total'))}</td><td>{esc(q.get('status'))}</td><td>{esc(q.get('created_at'))}</td></tr>" for phone, q in rows) or "<tr><td colspan='6' style='text-align:center;padding:24px;color:#777'>No quotes found.</td></tr>"
-    return HTMLResponse(content=f"""
-    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Quotes Dashboard</title><style>body{{font-family:Arial;background:#f7f7f7;padding:24px}} .top{{display:flex;justify-content:space-between;align-items:center}} a.btn{{background:#111;color:white;padding:10px 14px;border-radius:10px;text-decoration:none}} .cards{{display:flex;gap:12px;flex-wrap:wrap}} .card{{background:white;padding:16px;border-radius:14px;border:1px solid #e5e5e5}} table{{width:100%;border-collapse:collapse;background:white;border-radius:14px;overflow:hidden;margin-top:16px}} th,td{{padding:12px;border-bottom:1px solid #eee;text-align:left}} th{{background:#111;color:white}}</style></head><body><div class='top'><h1>Quotes Dashboard</h1><p><a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Back</a> <a class='btn' href='/price-list?key={esc(DASHBOARD_KEY)}'>Price List</a></p></div><div class='cards'><div class='card'><b>Total Quotes</b><br>{len(rows)}</div><div class='card'><b>Total Quote Value</b><br>{_money(total_value)}</div></div><p><a href='/quotes?key={esc(DASHBOARD_KEY)}&status=all'>All</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=DRAFT'>Draft</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=QUOTE_SENT'>Sent</a> | <a href='/quotes?key={esc(DASHBOARD_KEY)}&status=APPROVED'>Approved</a></p><table><thead><tr><th>Quote</th><th>Customer</th><th>Product</th><th>Total</th><th>Status</th><th>Created</th></tr></thead><tbody>{body}</tbody></table></body></html>
-    """)
+    for phone, customer, quote in all_quotes:
+        quote_status = quote.get("status") or "DRAFT"
+        if status != "all" and quote_status != status:
+            continue
+        if query:
+            haystack = " ".join([
+                str(quote.get("quote_id", "")),
+                str(phone),
+                str(customer.get("name", "")),
+                str(customer.get("buyer_type", "")),
+                str(quote.get("product_name", "")),
+                str(quote.get("status", "")),
+            ]).lower()
+            if query not in haystack:
+                continue
+        rows.append((phone, customer, quote))
+
+    rows.sort(key=lambda x: x[2].get("created_at", ""), reverse=True)
+
+    def status_badge(value):
+        value = value or "DRAFT"
+        cls = {
+            "DRAFT": "yellow",
+            "QUOTE_SENT": "blue",
+            "APPROVED": "green",
+            "REJECTED": "danger",
+            "EXPIRED": "muted",
+        }.get(value, "purple")
+        return f"<span class='q-status {cls}'>{esc(value)}</span>"
+
+    def filter_chip(label, value, count):
+        active = "active" if status == value else ""
+        return f"<a class='q-chip {active}' href='/quotes?key={esc(DASHBOARD_KEY)}&status={esc(value)}&q={esc(q)}'>{esc(label)} ({count})</a>"
+
+    if rows:
+        body = "".join(
+            f"""
+            <tr>
+                <td><a class='quote-id' href='/customer/{esc(phone)}/quote/{esc(quote.get('quote_id'))}?key={esc(DASHBOARD_KEY)}'>{esc(quote.get('quote_id'))}</a><div class='muted'>View Details</div></td>
+                <td><a href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>{esc(customer.get('name') or 'Customer')}</a><div class='muted'>{esc(phone)}</div></td>
+                <td><b>{esc(quote.get('product_name') or '-')}</b><div class='muted'>{esc(quote.get('qty') or '')} x Unit</div></td>
+                <td><b>{_money(quote.get('total'))}</b></td>
+                <td>{status_badge(quote.get('status'))}</td>
+                <td>{esc(str(quote.get('created_at') or '')[:19].replace('T',' '))}</td>
+                <td class='actions-cell'>
+                    <a class='icon-btn' title='Open' href='/customer/{esc(phone)}/quote/{esc(quote.get('quote_id'))}?key={esc(DASHBOARD_KEY)}'>👁</a>
+                    <a class='icon-btn blue' title='Customer' href='/customer/{esc(phone)}?key={esc(DASHBOARD_KEY)}'>✎</a>
+                </td>
+            </tr>
+            """ for phone, customer, quote in rows
+        )
+        table_content = f"""
+        <table class='q-table'>
+            <thead><tr><th>Quote</th><th>Customer</th><th>Product</th><th>Total</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+            <tbody>{body}</tbody>
+        </table>
+        <div class='q-pagination'>Showing 1 to {len(rows)} of {len(rows)} quotes</div>
+        """
+    else:
+        table_content = f"""
+        <div class='empty-state'>
+            <div class='empty-icon'>📄</div>
+            <h2>No Quotes Yet</h2>
+            <p>Abhi koi quote nahi mila. Customer profile open karke first quotation create kar sakte ho.</p>
+            <a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>Go to CRM Leads</a>
+        </div>
+        """
+
+    html = f"""
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset='utf-8'>
+        <meta name='viewport' content='width=device-width, initial-scale=1'>
+        <title>Quotes Dashboard</title>
+        <style>
+            body{{font-family:Arial,sans-serif;background:#070A12;color:#F8FAFC;margin:0;padding:0;}}
+            .page{{max-width:1420px;margin:0 auto;padding:20px 28px 40px;}}
+            .topbar{{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 0 18px;border-bottom:1px solid #243047;}}
+            .left-top{{display:flex;align-items:center;gap:14px;}}
+            .home-btn{{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#7C3AED,#4F46E5);color:white!important;text-decoration:none;font-size:23px;font-weight:900;box-shadow:0 14px 32px rgba(124,58,237,.35);}}
+            .crumb{{color:#9CA3AF;font-size:14px;}} .crumb b{{color:white;}}
+            .search-row{{display:flex;gap:10px;align-items:center;}}
+            .search-input{{width:360px;padding:13px 15px;border-radius:13px;border:1px solid #243047;background:#0A0F1D;color:white;}}
+            .btn{{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#7C3AED,#4F46E5);color:white!important;padding:12px 18px;border-radius:13px;text-decoration:none;font-weight:800;border:0;}}
+            .headline{{display:flex;justify-content:space-between;align-items:flex-start;margin:24px 0 18px;gap:16px;}}
+            h1{{margin:0;font-size:32px;letter-spacing:-.03em;}} .subtitle{{color:#9CA3AF;margin-top:8px;}}
+            .kpis{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin-bottom:20px;}}
+            .kpi{{position:relative;overflow:hidden;border:1px solid #243047;border-radius:18px;padding:20px;background:linear-gradient(180deg,#111827,#080C17);min-height:140px;box-shadow:0 18px 40px rgba(0,0,0,.25);}}
+            .kpi.purple{{background:linear-gradient(135deg,rgba(124,58,237,.34),rgba(17,24,39,.96));}} .kpi.blue{{background:linear-gradient(135deg,rgba(22,131,255,.28),rgba(17,24,39,.96));}} .kpi.green{{background:linear-gradient(135deg,rgba(34,197,94,.24),rgba(17,24,39,.96));}} .kpi.orange{{background:linear-gradient(135deg,rgba(249,115,22,.25),rgba(17,24,39,.96));}} .kpi.pink{{background:linear-gradient(135deg,rgba(236,72,153,.25),rgba(17,24,39,.96));}}
+            .kpi-title{{color:#D1D5DB;font-size:14px;font-weight:800;}} .kpi-value{{font-size:30px;font-weight:900;margin-top:12px;}} .kpi-note{{color:#9CA3AF;margin-top:10px;font-size:13px;}}
+            .q-panel{{border:1px solid #243047;border-radius:20px;background:linear-gradient(180deg,rgba(17,24,39,.95),rgba(8,12,23,.95));padding:18px;box-shadow:0 20px 45px rgba(0,0,0,.28);}}
+            .filters{{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px;}}
+            .chip-row{{display:flex;gap:10px;flex-wrap:wrap;}}
+            .q-chip{{padding:11px 17px;border-radius:13px;border:1px solid #243047;background:#0A0F1D;color:#E5E7EB!important;text-decoration:none;font-weight:800;}}
+            .q-chip.active{{background:linear-gradient(135deg,#7C3AED,#4F46E5);color:white!important;border-color:transparent;}}
+            .q-table{{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border-radius:16px;border:1px solid #243047;}}
+            .q-table th{{background:rgba(124,58,237,.22);color:#D8B4FE;text-align:left;padding:15px;font-weight:900;}}
+            .q-table td{{padding:16px 15px;border-bottom:1px solid rgba(255,255,255,.07);color:#E5E7EB;vertical-align:middle;}}
+            .quote-id{{font-weight:900;color:#C084FC!important;text-decoration:none;}} .muted{{color:#9CA3AF;font-size:13px;margin-top:5px;}}
+            .q-status{{display:inline-block;padding:6px 10px;border-radius:9px;font-size:12px;font-weight:900;}}
+            .q-status.yellow{{background:rgba(250,204,21,.16);color:#FDE047;}} .q-status.blue{{background:rgba(22,131,255,.16);color:#60A5FA;}} .q-status.green{{background:rgba(34,197,94,.16);color:#4ADE80;}} .q-status.danger{{background:rgba(239,68,68,.16);color:#FCA5A5;}} .q-status.muted{{background:rgba(156,163,175,.16);color:#CBD5E1;}}
+            .actions-cell{{white-space:nowrap;}} .icon-btn{{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;margin-right:8px;border-radius:10px;background:#101827;border:1px solid #243047;text-decoration:none;color:#C084FC!important;}} .icon-btn.blue{{color:#60A5FA!important;}}
+            .q-pagination{{color:#9CA3AF;margin-top:18px;}}
+            .info-box{{margin-top:18px;border:1px solid #243047;border-radius:18px;background:#0B1020;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:18px;}}
+            .safe-box{{margin-top:18px;border:1px solid rgba(34,197,94,.45);border-radius:18px;background:linear-gradient(135deg,rgba(34,197,94,.16),rgba(8,12,23,.96));padding:18px 22px;display:flex;align-items:center;justify-content:space-between;gap:16px;}}
+            .safe-title{{color:#4ADE80;font-weight:900;font-size:18px;}} .safe-text{{color:#D1D5DB;margin-top:5px;}}
+            .empty-state{{text-align:center;padding:46px 20px;border:1px dashed #334155;border-radius:18px;background:rgba(15,23,42,.5);}} .empty-icon{{font-size:42px;margin-bottom:10px;}}
+            @media(max-width:1000px){{.kpis{{grid-template-columns:repeat(2,1fr);}}.search-row{{width:100%;}}.search-input{{width:100%;}}.topbar,.headline{{flex-direction:column;align-items:flex-start;}}.info-box{{grid-template-columns:1fr;}}}}
+        </style>
+    </head>
+    <body>
+        <div class='page'>
+            <div class='topbar'>
+                <div class='left-top'>
+                    <a class='home-btn' href='/dashboard?key={esc(DASHBOARD_KEY)}' title='Home'>⌂</a>
+                    <div class='crumb'>Home / Sales / <b>Quotes Dashboard</b></div>
+                </div>
+                <form class='search-row' method='get' action='/quotes'>
+                    <input type='hidden' name='key' value='{esc(DASHBOARD_KEY)}'>
+                    <input type='hidden' name='status' value='{esc(status)}'>
+                    <input class='search-input' name='q' value='{esc(q)}' placeholder='Search quotes, customers, products...'>
+                    <button class='btn' type='submit'>Search</button>
+                    <a class='btn' href='/price-list?key={esc(DASHBOARD_KEY)}'>Price List</a>
+                </form>
+            </div>
+
+            <div class='headline'>
+                <div><h1>Quotes Dashboard</h1><div class='subtitle'>Manage and track all your quotes in one place.</div></div>
+                <a class='btn' href='/dashboard?key={esc(DASHBOARD_KEY)}'>CRM Leads</a>
+            </div>
+
+            <div class='kpis'>
+                <div class='kpi purple'><div class='kpi-title'>Total Quotes</div><div class='kpi-value'>{len(all_quotes)}</div><div class='kpi-note'>All time quotes</div></div>
+                <div class='kpi blue'><div class='kpi-title'>Total Quote Value</div><div class='kpi-value'>{_money(total_value_all)}</div><div class='kpi-note'>All time value</div></div>
+                <div class='kpi green'><div class='kpi-title'>Draft</div><div class='kpi-value'>{draft_count}</div><div class='kpi-note'>Under review</div></div>
+                <div class='kpi orange'><div class='kpi-title'>Sent</div><div class='kpi-value'>{sent_count}</div><div class='kpi-note'>Quotes sent</div></div>
+                <div class='kpi pink'><div class='kpi-title'>Approved</div><div class='kpi-value'>{approved_count}</div><div class='kpi-note'>Quotes approved</div></div>
+            </div>
+
+            <div class='q-panel'>
+                <div class='filters'>
+                    <div class='chip-row'>
+                        {filter_chip('All', 'all', len(all_quotes))}
+                        {filter_chip('Draft', 'DRAFT', draft_count)}
+                        {filter_chip('Sent', 'QUOTE_SENT', sent_count)}
+                        {filter_chip('Approved', 'APPROVED', approved_count)}
+                        {filter_chip('Rejected', 'REJECTED', rejected_count)}
+                        {filter_chip('Expired', 'EXPIRED', expired_count)}
+                    </div>
+                    <a class='btn' href='/quotes?key={esc(DASHBOARD_KEY)}'>Reset</a>
+                </div>
+                {table_content}
+            </div>
+
+            <div class='info-box'>
+                <div><b>Quotes Management</b><div class='muted'>Create, send and track quotations from customer profile. Approved quotes can be converted into orders.</div></div>
+                <div><b>Quick Actions</b><div class='muted'>Open customer profile → create quote → send quotation → track status → convert to order.</div></div>
+            </div>
+
+            <div class='safe-box'>
+                <div><div class='safe-title'>✅ All your existing data is 100% safe!</div><div class='safe-text'>No customer inquiry, message, lead, quote or backup data has been deleted or changed by this UI update.</div></div>
+                <a class='btn' href='/backup-center?key={esc(DASHBOARD_KEY)}'>View Backup Center</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 
 
